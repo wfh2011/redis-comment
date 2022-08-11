@@ -49,6 +49,8 @@
  * In other cases where we don't want to prematurely lose the connection,
  * it can go beyond 1 as well; currently it is only done by connAccept().
  */
+/* 增加引用
+ * */
 static inline void connIncrRefs(connection *conn) {
     conn->refs++;
 }
@@ -60,11 +62,14 @@ static inline void connIncrRefs(connection *conn) {
  * explicit connIncrRefs() is used, the caller is expected to take care of
  * that.
  */
-
+/* 减少引用
+ * */
 static inline void connDecrRefs(connection *conn) {
     conn->refs--;
 }
 
+/* 是否有引用
+ * */
 static inline int connHasRefs(connection *conn) {
     return conn->refs;
 }
@@ -74,6 +79,9 @@ static inline int connHasRefs(connection *conn) {
  * 2. Execute the handler (if set).
  * 3. Decrement refs and perform deferred close, if refs==0.
  */
+/* 1. 执行handler函数，参数conn
+ * 2. 如果没有引用了且flags为CONN_FLAG_CLOSE_SCHEDULED，则关闭conn(实际上只是释放conn的内存)
+ * */
 static inline int callHandler(connection *conn, ConnectionCallbackFunc handler) {
     connIncrRefs(conn);
     if (handler) handler(conn);

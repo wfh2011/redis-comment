@@ -74,6 +74,8 @@ ConnectionType CT_Socket;
  * be embedded in different structs, not just client.
  */
 
+/* 创建一个connection = malloc + handler(type = CT_Socket)
+ * */
 connection *connCreateSocket() {
     connection *conn = zcalloc(sizeof(connection));
     conn->type = &CT_Socket;
@@ -92,6 +94,8 @@ connection *connCreateSocket() {
  * is not in an error state (which is not possible for a socket connection,
  * but could but possible with other protocols).
  */
+/* 基于fd创建一个connection = fd + malloc + state(CONN_STATE_ACCEPTING)
+ * */
 connection *connCreateAcceptedSocket(int fd) {
     connection *conn = connCreateSocket();
     conn->fd = fd;
@@ -99,6 +103,9 @@ connection *connCreateAcceptedSocket(int fd) {
     return conn;
 }
 
+/* 建立socket连接：connect + state(CONN_STATE_CONNECTING) + conn_handler + 文件事件
+ * 文件事件: connSocketEventHandler + fd(来自conn) + AE_WRITABLE
+ * */
 static int connSocketConnect(connection *conn, const char *addr, int port, const char *src_addr,
         ConnectionCallbackFunc connect_handler) {
     int fd = anetTcpNonBlockBestEffortBindConnect(NULL,addr,port,src_addr);
@@ -145,6 +152,19 @@ void *connGetPrivateData(connection *conn) {
  */
 
 /* Close the connection and free resources. */
+/* 关闭连接和释放资源
+ * 有连接
+ * 1. 删除文件事件(AE_READABLE + AE_WRITABLE)
+ * 2. close fd
+ * 3. conn.fd = -1
+ *
+ * 有引用:
+ * 1. flag += CONN_FLAG_CLOSE_SCHEDULED
+ * 2. 内存不释放
+ *
+ * 参考：
+ * 1. callHandler
+ * */
 static void connSocketClose(connection *conn) {
     if (conn->fd != -1) {
         aeDeleteFileEvent(server.el,conn->fd, AE_READABLE | AE_WRITABLE);
@@ -164,6 +184,14 @@ static void connSocketClose(connection *conn) {
 }
 
 /* socket写数据
+ *
+ * 写成功
+ * 1. write: DataPtr + Len + fd(conn)
+ * 2. 返回已经写入的长度
+ *
+ * 写失败
+ * 1. conn.last_error + conn.state
+ * 2. 返回write返回的值
  * */
 static int connSocketWrite(connection *conn, const void *data, size_t data_len) {
     int ret = write(conn->fd, data, data_len);
@@ -198,6 +226,7 @@ static int connSocketWritev(connection *conn, const struct iovec *iov, int iovcn
 }
 
 /* socket读数据
+ * 1. read
  * */
 static int connSocketRead(connection *conn, void *buf, size_t buf_len) {
     int ret = read(conn->fd, buf, buf_len);
@@ -216,7 +245,7 @@ static int connSocketRead(connection *conn, void *buf, size_t buf_len) {
     return ret;
 }
 
-/* accept，并执行回调函数
+/* 执行accept_handler + state(CONN_STATE_CONNECTED)
  * */
 static int connSocketAccept(connection *conn, ConnectionCallbackFunc accept_handler) {
     int ret = C_OK;
@@ -274,6 +303,10 @@ static const char *connSocketGetLastError(connection *conn) {
     return strerror(conn->last_errno);
 }
 
+/* 主要是针对在以下情况处理:
+ * 1. 调用connSocketConnect后: write_handler != NULL, 删除conn->fd的文件事件; 执行conn_handler
+ * 2.
+ * */
 static void connSocketEventHandler(struct aeEventLoop *el, int fd, void *clientData, int mask)
 {
     UNUSED(el);
