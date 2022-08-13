@@ -1,8 +1,10 @@
 #!/bin/bash
 
+# 当前脚本所在目录
 SCRIPT_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 
 # Settings
+# 配置参数
 BIN_PATH="$SCRIPT_DIR/../../src/"
 CLUSTER_HOST=127.0.0.1
 PORT=30000
@@ -15,6 +17,7 @@ ADDITIONAL_OPTIONS=""
 # You may want to put the above config parameters into config.sh in order to
 # override the defaults without modifying this script.
 
+# 如果有自定义脚本存在，则覆盖签名的参数，config.sh
 if [ -a config.sh ]
 then
     source "config.sh"
@@ -23,6 +26,7 @@ fi
 # Computed vars
 ENDPORT=$((PORT+NODES))
 
+# create-cluster.sh start => 启动进程
 if [ "$1" == "start" ]
 then
     while [ $((PORT < ENDPORT)) != "0" ]; do
@@ -33,6 +37,8 @@ then
     exit 0
 fi
 
+# create-cluster.sh create => 创建集群
+# create-cluster.sh create -f => 创建集群的时候，执行redis-cli命令增加--cluster-yes选项
 if [ "$1" == "create" ]
 then
     HOSTS=""
@@ -48,6 +54,7 @@ then
     exit 0
 fi
 
+# create-cluster.sh stop => 停止所有进程，注意有个nosave, 即关闭的时候不生成持久化文件
 if [ "$1" == "stop" ]
 then
     while [ $((PORT < ENDPORT)) != "0" ]; do
@@ -58,6 +65,7 @@ then
     exit 0
 fi
 
+# create-cluster.sh watch => 每个redis-server都执行cluster nodes命令，并监视其效果
 if [ "$1" == "watch" ]
 then
     PORT=$((PORT+1))
@@ -70,6 +78,7 @@ then
     exit 0
 fi
 
+# create-cluster.sh tail id => tail -f指定redis-server的日志
 if [ "$1" == "tail" ]
 then
     INSTANCE=$2
@@ -78,12 +87,14 @@ then
     exit 0
 fi
 
+# create-cluster.sh tailall => tail -f *.log
 if [ "$1" == "tailall" ]
 then
     tail -f *.log
     exit 0
 fi
 
+# create-cluster.sh call => 每个节点都执行命令，最多7个参数
 if [ "$1" == "call" ]
 then
     while [ $((PORT < ENDPORT)) != "0" ]; do
@@ -93,6 +104,7 @@ then
     exit 0
 fi
 
+# create-cluster.sh clean => 清除所有的日志，aof，rdb，node.con
 if [ "$1" == "clean" ]
 then
     echo "Cleaning *.log"
@@ -106,6 +118,7 @@ then
     exit 0
 fi
 
+# create-cluster.sh clean-logs => 仅仅清除日志
 if [ "$1" == "clean-logs" ]
 then
     echo "Cleaning *.log"

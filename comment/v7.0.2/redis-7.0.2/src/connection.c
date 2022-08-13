@@ -305,7 +305,7 @@ static const char *connSocketGetLastError(connection *conn) {
 
 /* 主要是针对在以下情况处理:
  * 1. 调用connSocketConnect后: write_handler != NULL, 删除conn->fd的文件事件; 执行conn_handler
- * 2.
+ * 2. write_handler为空，删除conn->fd的事件
  * */
 static void connSocketEventHandler(struct aeEventLoop *el, int fd, void *clientData, int mask)
 {

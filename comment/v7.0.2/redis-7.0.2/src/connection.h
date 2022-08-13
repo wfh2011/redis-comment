@@ -105,6 +105,9 @@ struct connection {
  * a connClose() must be called.
  */
 
+/* 本质上调用了connSocketAccept
+ * static int connSocketAccept(connection *conn, ConnectionCallbackFunc accept_handler);
+ * */
 static inline int connAccept(connection *conn, ConnectionCallbackFunc accept_handler) {
     return conn->type->accept(conn, accept_handler);
 }
@@ -118,6 +121,9 @@ static inline int connAccept(connection *conn, ConnectionCallbackFunc accept_han
  * If C_ERR is returned, the operation failed and the connection handler shall
  * not be expected.
  */
+/* 实际上执行的是以下函数：
+ * static int connSocketConnect(connection *conn, const char *addr, int port, const char *src_addr, ConnectionCallbackFunc connect_handler)
+ * */
 static inline int connConnect(connection *conn, const char *addr, int port, const char *src_addr,
         ConnectionCallbackFunc connect_handler) {
     return conn->type->connect(conn, addr, port, src_addr, connect_handler);
