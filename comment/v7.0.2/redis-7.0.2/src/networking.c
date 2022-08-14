@@ -88,6 +88,8 @@ int listMatchObjects(void *a, void *b) {
 
 /* This function links the client to the global linked list of clients.
  * unlinkClient() does the opposite, among other things. */
+/* 将当前客户端放到全局变量的链表和rax后面
+ * */
 void linkClient(client *c) {
     listAddNodeTail(server.clients,c);
     /* Note that we remember the linked list node where the client is stored,
@@ -140,6 +142,9 @@ client *createClient(connection *conn) {
         connEnableTcpNoDelay(conn);
         if (server.tcpkeepalive)
             connKeepAlive(conn,server.tcpkeepalive);
+        /* 注意此处，accept之后，需要将cfd放到事件循环中
+         * 并且将事件的回调函数设置为readQueryFromClient，即读读取数据
+         * */
         connSetReadHandler(conn, readQueryFromClient);
         connSetPrivateData(conn, c);
     }
@@ -1228,6 +1233,8 @@ void clientAcceptHandler(connection *conn) {
      * is no password set, nor a specific interface is bound, we don't accept
      * requests from non loopback interfaces. Instead we try to explain the
      * user what to do to fix it if needed. */
+    /* 如果是保护模式，而且没有密码，那么意味着只要不是本地客户端过来的连接，返回错误
+     * */
     if (server.protected_mode &&
         DefaultUser->flags & USER_FLAG_NOPASS)
     {
@@ -1314,6 +1321,9 @@ static void acceptCommonHandler(connection *conn, int flags, char *ip) {
     }
 
     /* Create connection and client */
+    /* 当前代码，只有malloc失败的时候才会返回NULL
+     * 一旦malloc失败，会崩掉
+     * */
     if ((c = createClient(conn)) == NULL) {
         serverLog(LL_WARNING,
             "Error registering fd event for the new client: %s (conn: %s)",
@@ -1324,6 +1334,9 @@ static void acceptCommonHandler(connection *conn, int flags, char *ip) {
     }
 
     /* Last chance to keep flags */
+    /* 在正常的tcp和TLS中，flags值为0，几乎没有任何作用
+     * 在UnixSocket中，传递CLIENT_UNIX_SOCKET的flags
+     * */
     c->flags |= flags;
 
     /* Initiate accept.
@@ -1334,6 +1347,12 @@ static void acceptCommonHandler(connection *conn, int flags, char *ip) {
      *
      * Because of that, we must do nothing else afterwards.
      */
+
+    /* 1. 状态从CONN_STATE_ACCEPTING => CONN_STATE_CONNECTED
+     * 2. 简单判断:
+     *  1) 默认用户且开启保护模式，是本地TCP客户端，则失败
+     *  2) 默认用户且开启保护模式，是UnixSocket客户端，则失败
+     * */
     if (connAccept(conn, clientAcceptHandler) == C_ERR) {
         char conninfo[100];
         if (connGetState(conn) == CONN_STATE_ERROR)
@@ -1372,6 +1391,11 @@ void acceptTcpHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
             return;
         }
         serverLog(LL_VERBOSE,"Accepted %s:%d", cip, cport);
+        /*
+         * 1. accept => CONN_STATE_ACCEPTING
+         * 2. maxclients判断 => CONN_STATE_CONNECTED
+         *
+         * */
         acceptCommonHandler(connCreateAcceptedSocket(cfd),0,cip);
     }
 }

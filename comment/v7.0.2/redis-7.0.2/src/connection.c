@@ -287,6 +287,18 @@ static int connSocketSetWriteHandler(connection *conn, ConnectionCallbackFunc fu
 /* Register a read handler, to be called when the connection is readable.
  * If NULL, the existing handler is removed.
  */
+/*
+ * 一般是accept之后，需要对accept的cfd注册回调函数，一般是接收数据的处理
+ * 1. read_handler和传递的相同，直接返回成功
+ * 2. 设置read_handler
+ * 3. 如果read_handler为空，删除cfd的可读事件
+ * 4. 如果read_handler不为空，创建cfd的事件机制
+ *
+ * 综合来说，可分为以下情况
+ * 1. read_handler = func, 忽略
+ * 2. read_handler != func && func == NULL => 删除cfd的文件事件
+ * 3. read_handler != func && func != NULL => 创建cfd的文件事件
+ * */
 static int connSocketSetReadHandler(connection *conn, ConnectionCallbackFunc func) {
     if (func == conn->read_handler) return C_OK;
 
