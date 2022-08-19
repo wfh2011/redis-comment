@@ -4637,6 +4637,15 @@ int verifyClusterConfigWithData(void) {
 
 /* Set the specified node 'n' as master for this node.
  * If this node is currently a master, it is turned into a slave. */
+
+/*
+ * 设置节点n为master
+ * 1. myself是主，剔除当前的master和migrate标记,flag补上slave
+ * 2. myself是从，需要将原来的master替换成n
+ * 3. 将n添加myself为slave
+ * 4. 数据同步
+ * 5. 重置手动failover
+ * */
 void clusterSetMaster(clusterNode *n) {
     serverAssert(n != myself);
     serverAssert(myself->numslots == 0);
@@ -5727,6 +5736,25 @@ NULL
                              CLUSTER_TODO_SAVE_CONFIG);
         addReply(c,shared.ok);
     } else if (!strcasecmp(c->argv[1]->ptr,"replicate") && c->argc == 3) {
+        /* 将当前节点成为node_id的副本
+         * 条件:
+         * 1. node_id的节点在当前节点的内存当中
+         * 2. node_id的节点不是当前节点
+         * 3. node_id的节点不能是slave
+         * 4. 当前节点是master，有slot，不允许
+         * 5. 当前节点是master，有数据，不允许
+         * 6. 将node_id的节点设置为master
+         *
+         * 设置node_id节点为主
+         * 1. myself是主，剔除当前的master和migrate标记,flag补上slave
+         * 2. myself是从，需要将原来的master替换成n
+         * 3. 将n添加myself为slave
+         * 4. 数据同步
+         * 5. 重置手动failover
+         *
+         * 更新配置文件
+         * */
+
         /* CLUSTER REPLICATE <NODE ID> */
         /* Lookup the specified node in our table. */
         clusterNode *n = clusterLookupNode(c->argv[2]->ptr, sdslen(c->argv[2]->ptr));

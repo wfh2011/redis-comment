@@ -2568,6 +2568,7 @@ int processInputBuffer(client *c) {
 
         /* Determine request type when unknown. */
         if (!c->reqtype) {
+            // '*'表示一个数组
             if (c->querybuf[c->qb_pos] == '*') {
                 c->reqtype = PROTO_REQ_MULTIBULK;
             } else {
@@ -2646,6 +2647,7 @@ void readQueryFromClient(connection *conn) {
 
     /* Check if we want to read from the client later when exiting from
      * the event loop. This is the case if threaded I/O is enabled. */
+    // 退出事件循环后读数据，仅在线程I/O开启的情况使用
     if (postponeClientRead(c)) return;
 
     /* Update total number of reads on server */
@@ -2720,6 +2722,9 @@ void readQueryFromClient(connection *conn) {
         atomicIncr(server.stat_net_input_bytes, nread);
     }
 
+    /* 如果客户端读取的数据大于配置的客户端查询缓冲区(默认1G)，则直接返回
+     * 这里的客户端不能是master的客户端
+     * */
     if (!(c->flags & CLIENT_MASTER) && sdslen(c->querybuf) > server.client_max_querybuf_len) {
         sds ci = catClientInfoString(sdsempty(),c), bytes = sdsempty();
 
