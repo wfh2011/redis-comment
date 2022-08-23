@@ -2130,6 +2130,13 @@ void clusterProcessPingExtensions(clusterMsg *hdr, clusterLink *link) {
     updateAnnouncedHostname(sender, ext_hostname);
 }
 
+/*
+ * 找到sender的指针
+ * 1. 最终找到sender,link无sender，更新link->sender; node->inbound_link = link
+ * 2. link有node，非handshake,返回link->node
+ * 3. link无node，hdr->sender存在，更新并返回
+ * 4. link有node，正在handshake, 返回hdr->sender
+ * */
 static clusterNode *getNodeFromLinkAndMsg(clusterLink *link, clusterMsg *hdr) {
     clusterNode *sender;
     if (link->node && !nodeInHandshake(link->node)) {
@@ -2161,7 +2168,11 @@ static clusterNode *getNodeFromLinkAndMsg(clusterLink *link, clusterMsg *hdr) {
  * received from the wrong sender ID). */
 int clusterProcessPacket(clusterLink *link) {
     clusterMsg *hdr = (clusterMsg*) link->rcvbuf;
+
+    // 接收的消息长度
     uint32_t totlen = ntohl(hdr->totlen);
+
+    // 消息类型
     uint16_t type = ntohs(hdr->type);
     mstime_t now = mstime();
 
@@ -2184,8 +2195,12 @@ int clusterProcessPacket(clusterLink *link) {
         return 1;
     }
 
+    // 发送节点的flag
     uint16_t flags = ntohs(hdr->flags);
+
+    // 扩展数
     uint16_t extensions = ntohs(hdr->extensions);
+
     uint64_t senderCurrentEpoch = 0, senderConfigEpoch = 0;
     uint32_t explen; /* expected length of this packet */
     clusterNode *sender;
@@ -2193,8 +2208,10 @@ int clusterProcessPacket(clusterLink *link) {
     if (type == CLUSTERMSG_TYPE_PING || type == CLUSTERMSG_TYPE_PONG ||
         type == CLUSTERMSG_TYPE_MEET)
     {
+        // 个数
         uint16_t count = ntohs(hdr->count);
 
+        // 由于存在union，在特定类型下(PING、PONG、MEET)，计算包长度
         explen = sizeof(clusterMsg)-sizeof(union clusterMsgData);
         explen += (sizeof(clusterMsgDataGossip)*count);
 
@@ -2245,33 +2262,44 @@ int clusterProcessPacket(clusterLink *link) {
         explen = totlen;
     }
 
+    // 包长度校验，如果长度不对，则直接返回
     if (totlen != explen) {
         serverLog(LL_WARNING, "Received invalid %s packet of length %lld but expected length %lld", 
             clusterGetMessageTypeString(type), (unsigned long long) totlen, (unsigned long long) explen);
         return 1;
     } 
 
+    // 从hdr->send或者link->node找到clusterNode*指针
     sender = getNodeFromLinkAndMsg(link, hdr);
 
     /* Update the last time we saw any data from this node. We
      * use this in order to avoid detecting a timeout from a node that
      * is just sending a lot of data in the cluster bus, for instance
      * because of Pub/Sub. */
+    // 找到则更新接收消息时间
     if (sender) sender->data_received = now;
 
+    // sender存在且非handshake处理
     if (sender && !nodeInHandshake(sender)) {
         /* Update our currentEpoch if we see a newer epoch in the cluster. */
+        // sender的currentEpoch
         senderCurrentEpoch = ntohu64(hdr->currentEpoch);
+
+        // sender的configEpoch
         senderConfigEpoch = ntohu64(hdr->configEpoch);
+
+        // 更新集群的currentEpoch
         if (senderCurrentEpoch > server.cluster->currentEpoch)
             server.cluster->currentEpoch = senderCurrentEpoch;
         /* Update the sender configEpoch if it is publishing a newer one. */
+        // 更新sender的configEpoch,并持久化到文件中
         if (senderConfigEpoch > sender->configEpoch) {
             sender->configEpoch = senderConfigEpoch;
             clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG|
                                  CLUSTER_TODO_FSYNC_CONFIG);
         }
         /* Update the replication offset info for this node. */
+        // 更新复制的offset
         sender->repl_offset = ntohu64(hdr->offset);
         sender->repl_offset_time = now;
         /* If we are a slave performing a manual failover and our master
@@ -3280,6 +3308,9 @@ void clusterSendFail(char *nodename) {
 /* Send an UPDATE message to the specified link carrying the specified 'node'
  * slots configuration. The node name, slots bitmap, and configEpoch info
  * are included. */
+/* 发送node变更消息，主要涉及nodename configepoch slots
+ * 接收消息的节点是link->node
+ * */
 void clusterSendUpdate(clusterLink *link, clusterNode *node) {
     clusterMsg buf[1];
     clusterMsg *hdr = (clusterMsg*) buf;
