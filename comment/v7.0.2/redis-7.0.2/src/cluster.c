@@ -1718,6 +1718,7 @@ void clusterProcessGossipSection(clusterMsg *hdr, clusterLink *link) {
         clusterNode *node;
         sds ci;
 
+        /* 日志代码，可以忽略 */
         if (server.verbosity == LL_DEBUG) {
             ci = representClusterNodeFlags(sdsempty(), flags);
             serverLog(LL_DEBUG,"GOSSIP %.40s %s:%d@%d %s",
@@ -1736,6 +1737,11 @@ void clusterProcessGossipSection(clusterMsg *hdr, clusterLink *link) {
                Handle failure reports, only when the sender is a master. */
             if (sender && nodeIsMaster(sender) && node != myself) {
                 if (flags & (CLUSTER_NODE_FAIL|CLUSTER_NODE_PFAIL)) {
+                    /*
+                     * sender认为node是失败的，所以将sender放到node的失败报告
+                     * 添加成功，则打印一个日志
+                     * 添加失败则是已存在
+                     * */
                     if (clusterNodeAddFailureReport(node,sender)) {
                         serverLog(LL_VERBOSE,
                             "Node %.40s reported node %.40s as not reachable.",
@@ -1743,6 +1749,8 @@ void clusterProcessGossipSection(clusterMsg *hdr, clusterLink *link) {
                     }
                     markNodeAsFailingIfNeeded(node);
                 } else {
+                    /* 剔除失败报告，因为都已经上报了
+                     * */
                     if (clusterNodeDelFailureReport(node,sender)) {
                         serverLog(LL_VERBOSE,
                             "Node %.40s reported node %.40s is back online.",
@@ -1802,6 +1810,8 @@ void clusterProcessGossipSection(clusterMsg *hdr, clusterLink *link) {
              * Note that we require that the sender of this gossip message
              * is a well known node in our cluster, otherwise we risk
              * joining another cluster. */
+            /* 消息中自带的nodename不在内存中的处理
+             * */
             if (sender &&
                 !(flags & CLUSTER_NODE_NOADDR) &&
                 !clusterBlacklistExists(g->nodename))
@@ -2379,6 +2389,11 @@ int clusterProcessPacket(clusterLink *link) {
                     link->node->name,
                     (int)(now-(link->node->ctime)),
                     link->node->flags);
+
+                /* 如果链路的所对应的node与消息的name不匹配，说明断开连接了
+                 * 此时flag要增加CLUSTER_NODE_NOADDR
+                 * 并且要将link所对应的ip、port、pport、cport等参数置为空
+                 * */
                 link->node->flags |= CLUSTER_NODE_NOADDR;
                 link->node->ip[0] = '\0';
                 link->node->port = 0;
@@ -2878,21 +2893,38 @@ void clusterBuildMessageHdr(clusterMsg *hdr, int type) {
      * If this node is a slave we send the master's information instead (the
      * node is flagged as slave so the receiver knows that it is NOT really
      * in charge for this slots. */
+    /*
+     * 1. myself是正儿八经的slave(myself知道是谁的从)，master = myself->slaveof
+     * 2. myself是slave，但是不知道谁的从，master = myself
+     * 3. myself是master， master = myself
+     * */
     master = (nodeIsSlave(myself) && myself->slaveof) ?
               myself->slaveof : myself;
 
     memset(hdr,0,sizeof(*hdr));
+
+    // redis cluster通信协议版本， 当前值为1
     hdr->ver = htons(CLUSTER_PROTO_VER);
+
+    // 签名: RCMB, Redis Cluster Message Bus
     hdr->sig[0] = 'R';
     hdr->sig[1] = 'C';
     hdr->sig[2] = 'm';
     hdr->sig[3] = 'b';
+
+    // 消息类型
     hdr->type = htons(type);
+
+    // 发送节点名称, myself的name
     memcpy(hdr->sender,myself->name,CLUSTER_NAMELEN);
 
     /* If cluster-announce-ip option is enabled, force the receivers of our
      * packets to use the specified address for this node. Otherwise if the
      * first byte is zero, they'll do auto discovery. */
+    /* 发送方IP
+     * cluster_announce_ip存在，hdr->myself = server.cluster_announce_ip
+     * cluster_announce_ip不存在，hdr->myself = 0
+     * */
     memset(hdr->myip,0,NET_IP_STR_LEN);
     if (server.cluster_announce_ip) {
         strncpy(hdr->myip,server.cluster_announce_ip,NET_IP_STR_LEN-1);
@@ -2903,21 +2935,42 @@ void clusterBuildMessageHdr(clusterMsg *hdr, int type) {
     int announced_port, announced_pport, announced_cport;
     deriveAnnouncedPorts(&announced_port, &announced_pport, &announced_cport);
 
+    // 更新当前分片的slot
     memcpy(hdr->myslots,master->slots,sizeof(hdr->myslots));
+
+    /* 1. 当前是master, hdr->slaveof = myself->slaveof->name
+     * 2. 当前是slave,  hdr->slaveof = 0
+     * 3. 其他, hdr->slaveof = 0
+     * */
     memset(hdr->slaveof,0,CLUSTER_NAMELEN);
     if (myself->slaveof != NULL)
         memcpy(hdr->slaveof,myself->slaveof->name, CLUSTER_NAMELEN);
+
+    // 从配置中获取port、pport、cport等
     hdr->port = htons(announced_port);
     hdr->pport = htons(announced_pport);
     hdr->cport = htons(announced_cport);
+
+    // hdr->flags = myself->flags
     hdr->flags = htons(myself->flags);
+
+    // hdr->state = server.cluster->state
     hdr->state = server.cluster->state;
 
     /* Set the currentEpoch and configEpochs. */
+    /* 发送epoch
+     * 1. currentEpoch，集群的currentEpoch
+     * 2. configEpoch， 优先当前分片master的configEpoch，次要的是当前节点的configEpoch
+     * */
     hdr->currentEpoch = htonu64(server.cluster->currentEpoch);
     hdr->configEpoch = htonu64(master->configEpoch);
 
     /* Set the replication offset. */
+    /*
+     * 更新hdr->offset的值
+     * 1. 当前是slave ...
+     * 2. 当前是master....
+     * */
     if (nodeIsSlave(myself))
         offset = replicationGetSlaveOffset();
     else
@@ -2925,11 +2978,14 @@ void clusterBuildMessageHdr(clusterMsg *hdr, int type) {
     hdr->offset = htonu64(offset);
 
     /* Set the message flags. */
+    // failover的flags设置
     if (nodeIsMaster(myself) && server.cluster->mf_end)
         hdr->mflags[0] |= CLUSTERMSG_FLAG0_PAUSED;
 
     /* Compute the message length for certain messages. For other messages
      * this is up to the caller. */
+    /* 根据消息类型，设置hdr->totlen
+     * */
     if (type == CLUSTERMSG_TYPE_FAIL) {
         totlen = sizeof(clusterMsg)-sizeof(union clusterMsgData);
         totlen += sizeof(clusterMsgDataFail);
@@ -3207,6 +3263,11 @@ void clusterSendPublish(clusterLink *link, robj *channel, robj *message, uint16_
  * (CLUSTER_NODE_PFAIL) and we also receive a gossip confirmation of this:
  * we switch the node state to CLUSTER_NODE_FAIL and ask all the other
  * nodes to do the same ASAP. */
+/*
+ * 发送关于某个节点失败的消息，对应的消息类型是CLUSTERMSG_TYPE_FAIL
+ * 1. 其实就是发送nodename
+ * 2. 将此信息广播至当前集群中能够接收的非handshake节点
+ * */
 void clusterSendFail(char *nodename) {
     clusterMsg buf[1];
     clusterMsg *hdr = (clusterMsg*) buf;
@@ -3979,6 +4040,12 @@ void clusterHandleManualFailover(void) {
 /* Check if the node is disconnected and re-establish the connection.
  * Also update a few stats while we are here, that can be used to make
  * better decisions in other part of the code. */
+/* 检查节点是否是断开连接或者是重新建立连接
+ * 1. 如果是myself或者是noaddr，则返回
+ * 2. 当前函数的返回值1或0，从函数调用来看，未发现有明显的用处
+ * 3. 判断handshake的节点是否超时了，如果超时则忽略此节点的handshake信息
+ * 4. 是否断开连接，断开则创建连接
+ * */
 static int clusterNodeCronHandleReconnect(clusterNode *node, mstime_t handshake_timeout, mstime_t now) {
     /* Not interested in reconnecting the link with myself or nodes
      * for which we have no address. */
@@ -3989,11 +4056,17 @@ static int clusterNodeCronHandleReconnect(clusterNode *node, mstime_t handshake_
 
     /* A Node in HANDSHAKE state has a limited lifespan equal to the
      * configured node timeout. */
+    /*
+     * 如果节点是握手状态，而且握手的时间超时了，直接剔除内存中的node信息
+     * cluster_node_timeout为握手超时时间，这个时间最小是1s
+     * */
     if (nodeInHandshake(node) && now - node->ctime > handshake_timeout) {
         clusterDelNode(node);
         return 1;
     }
 
+    /* 如果没有链路信息，则创建一个，链路信息
+     * */
     if (node->link == NULL) {
         clusterLink *link = createClusterLink(node);
         link->conn = server.tls_cluster ? connCreateTLS() : connCreateSocket();
@@ -5821,6 +5894,10 @@ NULL
     {
         /* CLUSTER COUNT-FAILURE-REPORTS <NODE ID> */
         clusterNode *n = clusterLookupNode(c->argv[2]->ptr, sdslen(c->argv[2]->ptr));
+        /* 统计失败报告
+         * cluster count-failure-reports nodeId
+         * 其实就是返回失败报告链表元素个数(先清除太久的报告)
+         * */
 
         if (!n) {
             addReplyErrorFormat(c,"Unknown node %s", (char*)c->argv[2]->ptr);
