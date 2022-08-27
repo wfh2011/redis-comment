@@ -2924,6 +2924,20 @@ void addReplyCommandCategories(client *c, struct redisCommand *cmd) {
  *
  * When the user is omitted it means that we are trying to authenticate
  * against the default user. */
+/*
+ * 对客户端进行授权判断
+ * 1. auth password
+ * 2. auth user password
+ *
+ * auth password
+ * 1. 说明是默认用户，通过acl方式对默认用户进行检查
+ *
+ * auth user password
+ * 1. 对指定用户，以acl方式进行检查
+ *
+ * 流程
+ * 1. 认证成功，c->authenticated = 1
+ * */
 void authCommand(client *c) {
     /* Only two or three argument forms are allowed. */
     if (c->argc > 3) {
