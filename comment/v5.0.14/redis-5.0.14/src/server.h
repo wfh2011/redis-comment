@@ -763,7 +763,11 @@ typedef struct client {
                                        copying this slave output buffer
                                        should use. */
     char replid[CONFIG_RUN_ID_SIZE+1]; /* Master replication ID (if master). */
+
+    // 当前角色是Master，用于记录Replica的端口号
     int slave_listening_port; /* As configured with: SLAVECONF listening-port */
+
+    // 当前角色是Master，用于记录Replica的ip
     char slave_ip[NET_IP_STR_LEN]; /* Optionally given by REPLCONF ip-address */
     int slave_capa;         /* Slave capabilities: SLAVE_CAPA_* bitwise OR. */
     multiState mstate;      /* MULTI/EXEC state */
@@ -1147,9 +1151,17 @@ struct redisServer {
     long long second_replid_offset; /* Accept offsets up to this for replid2. */
     int slaveseldb;                 /* Last SELECTed DB in replication output */
     int repl_ping_slave_period;     /* Master pings the slave every N seconds */
+
+    // 复制积压缓冲区
     char *repl_backlog;             /* Replication backlog for partial syncs */
+
+    // 复制积压缓冲区的大小
     long long repl_backlog_size;    /* Backlog circular buffer size */
+
+    // 复制积压实际数据长度
     long long repl_backlog_histlen; /* Backlog actual data length */
+
+    // 复制积压缓冲区(循环)当前的offset，下一个字节将会写
     long long repl_backlog_idx;     /* Backlog circular buffer current offset,
                                        that is the next byte will'll write to.*/
     long long repl_backlog_off;     /* Replication "master offset" of first
@@ -1165,8 +1177,13 @@ struct redisServer {
     int repl_diskless_sync_delay;   /* Delay to start a diskless repl BGSAVE. */
     /* Replication (slave) */
     char *masterauth;               /* AUTH with this password with master */
+
+    // Replica记录的Master服务器IP地址
     char *masterhost;               /* Hostname of master */
+
+    // Replica记录的Master服务器端口
     int masterport;                 /* Port of master */
+
     int repl_timeout;               /* Timeout after N seconds of master idle */
     client *master;     /* Client that is master for this slave */
     client *cached_master; /* Cached master to be reused for PSYNC. */

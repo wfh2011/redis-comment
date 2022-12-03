@@ -383,6 +383,7 @@ void loadServerConfigFromString(char *config) {
                 goto loaderr;
             }
         } else if (!strcasecmp(argv[0],"repl-backlog-size") && argc == 2) {
+            // 复制积压缓冲区
             long long size = memtoll(argv[1],NULL);
             if (size <= 0) {
                 err = "repl-backlog-size must be 1 or greater.";
@@ -716,10 +717,12 @@ void loadServerConfigFromString(char *config) {
         } else if (!strcasecmp(argv[0],"client-output-buffer-limit") &&
                    argc == 5)
         {
+            // 客户端类型: normal, slave, pubsub, master,
             int class = getClientTypeByName(argv[1]);
             unsigned long long hard, soft;
             int soft_seconds;
 
+            // 缓存区不需要master
             if (class == -1 || class == CLIENT_TYPE_MASTER) {
                 err = "Unrecognized client limit class: the user specified "
                 "an invalid one, or 'master' which has no buffer limits.";
@@ -732,6 +735,7 @@ void loadServerConfigFromString(char *config) {
                 err = "Negative number of seconds in soft limit is invalid";
                 goto loaderr;
             }
+            // 针对normal slave pubsub设置参数
             server.client_obuf_limits[class].hard_limit_bytes = hard;
             server.client_obuf_limits[class].soft_limit_bytes = soft;
             server.client_obuf_limits[class].soft_limit_seconds = soft_seconds;

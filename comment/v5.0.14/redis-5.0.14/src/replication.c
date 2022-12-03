@@ -94,6 +94,7 @@ void createReplicationBacklog(void) {
  * the most recent bytes, or the same data and more free space in case the
  * buffer is enlarged). */
 void resizeReplicationBacklog(long long newsize) {
+    // 复制积压缓冲区至少16KB
     if (newsize < CONFIG_REPL_BACKLOG_MIN_SIZE)
         newsize = CONFIG_REPL_BACKLOG_MIN_SIZE;
     if (server.repl_backlog_size == newsize) return;
@@ -793,10 +794,12 @@ void replconfCommand(client *c) {
             if ((getLongFromObjectOrReply(c,c->argv[j+1],
                     &port,NULL) != C_OK))
                 return;
+            // Replica的端口号
             c->slave_listening_port = port;
         } else if (!strcasecmp(c->argv[j]->ptr,"ip-address")) {
             sds ip = c->argv[j+1]->ptr;
             if (sdslen(ip) < sizeof(c->slave_ip)) {
+                // Replica的IP，长度判断是为了防止内存拷贝的时候越界
                 memcpy(c->slave_ip,ip,sdslen(ip)+1);
             } else {
                 addReplyErrorFormat(c,"REPLCONF ip-address provided by "
@@ -815,9 +818,13 @@ void replconfCommand(client *c) {
              * internal only command that normal clients should never use. */
             long long offset;
 
+            // 当前是Master，来自Replica的请求，心跳检测
+            // 获取Replica的offset值
             if (!(c->flags & CLIENT_SLAVE)) return;
             if ((getLongLongFromObject(c->argv[j+1], &offset) != C_OK))
                 return;
+
+            // 因为offset是一个增大过程，最大的一定是最新的值
             if (offset > c->repl_ack_off)
                 c->repl_ack_off = offset;
             c->repl_ack_time = server.unixtime;
@@ -1993,9 +2000,11 @@ int cancelReplicationHandshake(void) {
 void replicationSetMaster(char *ip, int port) {
     int was_master = server.masterhost == NULL;
 
+    // 如果当前节点有非预期的主，把以前的主内存释放掉
     sdsfree(server.masterhost);
     server.masterhost = sdsnew(ip);
     server.masterport = port;
+    // 释放之前主的客户端信息
     if (server.master) {
         freeClient(server.master);
     }
@@ -2016,6 +2025,7 @@ void replicationSetMaster(char *ip, int port) {
 
 /* Cancel replication, setting the instance as a master itself. */
 void replicationUnsetMaster(void) {
+    // 当前是Replica，没有Replica指向的master信息，说明本身就是独立状态
     if (server.masterhost == NULL) return; /* Nothing to do. */
     sdsfree(server.masterhost);
     server.masterhost = NULL;
@@ -2024,7 +2034,11 @@ void replicationUnsetMaster(void) {
      * used as secondary ID up to the current offset, and a new replication
      * ID is created to continue with a new replication history. */
     shiftReplicationId();
+
+    // 当前是Replica, 释放来自Master的client
     if (server.master) freeClient(server.master);
+
+    // 释放server.cached_master
     replicationDiscardCachedMaster();
     cancelReplicationHandshake();
     /* Disconnecting all the slaves is required: we need to inform slaves
@@ -2058,6 +2072,7 @@ void replicationHandleMasterDisconnection(void) {
      * the slaves only if we'll have to do a full resync with our master. */
 }
 
+// slaveof/replicaof命令
 void replicaofCommand(client *c) {
     /* SLAVEOF is not allowed in cluster mode as replication is automatically
      * configured using the current address of the master node. */
@@ -2070,7 +2085,10 @@ void replicaofCommand(client *c) {
      * into a master. Otherwise the new master address is set. */
     if (!strcasecmp(c->argv[1]->ptr,"no") &&
         !strcasecmp(c->argv[2]->ptr,"one")) {
+        // 执行的是replicaof no one命令，取消从属关系
         if (server.masterhost) {
+            // masterhost存在，说明当前是replica
+            // 取消从属关系
             replicationUnsetMaster();
             sds client = catClientInfoString(sdsempty(),c);
             serverLog(LL_NOTICE,"MASTER MODE enabled (user request from '%s')",
@@ -2078,6 +2096,7 @@ void replicaofCommand(client *c) {
             sdsfree(client);
         }
     } else {
+        // 正常的replicaof ip port命令
         long port;
 
         if (c->flags & CLIENT_SLAVE)
@@ -2085,6 +2104,10 @@ void replicaofCommand(client *c) {
             /* If a client is already a replica they cannot run this command,
              * because it involves flushing all replicas (including this
              * client) */
+            /*
+             * 假设场景是这样：Master <- current <- slave
+             * 不能成功，因为Master将会把数据同步覆盖到所有节点
+             * */
             addReplyError(c, "Command is not valid when client is a replica.");
             return;
         }
@@ -2093,6 +2116,7 @@ void replicaofCommand(client *c) {
             return;
 
         /* Check if we are already attached to the specified slave */
+        // 如果当前节点的主节点与预期的一支，直接忽略
         if (server.masterhost && !strcasecmp(server.masterhost,c->argv[1]->ptr)
             && server.masterport == port) {
             serverLog(LL_NOTICE,"REPLICAOF would result into synchronization with the master we are already connected with. No operation performed.");
@@ -2101,6 +2125,7 @@ void replicaofCommand(client *c) {
         }
         /* There was no previous master or the user specified a different one,
          * we can continue. */
+        // 如果当前节点的master没有主，或者与预期的主不一致，做处理
         replicationSetMaster(c->argv[1]->ptr, port);
         sds client = catClientInfoString(sdsempty(),c);
         serverLog(LL_NOTICE,"REPLICAOF %s:%d enabled (user request from '%s')",
@@ -2575,6 +2600,12 @@ long long replicationGetSlaveOffset(void) {
 /* --------------------------- REPLICATION CRON  ---------------------------- */
 
 /* Replication cron function, called 1 time per second. */
+/*
+ * 1s钟执行一次
+ * 用于Replica重新连接到master
+ * 检测传输失败
+ * 启动后台RDB传输等等
+ * */
 void replicationCron(void) {
     static long long replication_cron_loops = 0;
 
