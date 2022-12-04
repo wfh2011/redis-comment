@@ -45,6 +45,9 @@
 
 #include "anet.h"
 
+/* 按照指定格式构建字符串数组
+ * 数字长度最大不超过ANET_ERR_LEN(256)
+ * */
 static void anetSetError(char *err, const char *fmt, ...)
 {
     va_list ap;
@@ -55,6 +58,18 @@ static void anetSetError(char *err, const char *fmt, ...)
     va_end(ap);
 }
 
+
+/* 将fd(文件描述符)设置为非阻塞
+ *
+ * 流程:
+ * - 获取fd状态flags
+ * - 将获取的flag追加NONBLOCK属性
+ * - 将新的flags设置到fd中
+ *
+ * 结果:
+ * - 调用成功,返回ANET_OK(0),忽略err信息
+ * - 调用失败,返回ANET_ERR(-1),并将err的内存设置错误信息
+ * */
 int anetNonBlock(char *err, int fd)
 {
     int flags;
@@ -73,6 +88,16 @@ int anetNonBlock(char *err, int fd)
     return ANET_OK;
 }
 
+/*
+ * 开启TCP_NODELAY
+ *
+ * 引用<<Unix网络编程>>:
+ * 开启TCP_NODELAY将会禁止TCP的Nagle算法，默认情况Nagle算法是启动的
+ * Nagle算法的目的在于减少广域网(WAN)上小分组的数目。该算法指出: 如果某个给定的连接上有待确认数据(outstanding data),
+ *      那么原本应该作为用户写操作之响应的在该连接上立即发送相应小分组(小于MSS的任何分组)的行为就不会发生，
+ *      直到现有数据被确认为止。
+ * TCP总是尽可能地发送最大大小的分组，Nagle算法的目的在于防止一个连接在任何时刻有多个小分组待确认
+ * */
 int anetTcpNoDelay(char *err, int fd)
 {
     int yes = 1;
@@ -84,6 +109,9 @@ int anetTcpNoDelay(char *err, int fd)
     return ANET_OK;
 }
 
+/*
+ * 设置TCP发送缓冲区的容量上限
+ * */
 int anetSetSendBuffer(char *err, int fd, int buffsize)
 {
     if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &buffsize, sizeof(buffsize)) == -1)
@@ -94,6 +122,13 @@ int anetSetSendBuffer(char *err, int fd, int buffsize)
     return ANET_OK;
 }
 
+/*
+ * 给一个TCP套接字设置保持存活(keep-alive)后，如果2小时内在该套接字的任一方向上都没有数据交换,
+ * TCP就自动给对端发送一个保持存活探测分节(keep-alive probe)。这是一个对端必须响应的TCP分结,会导致以下情况:
+ * - 对端以期望的ACK响应
+ * - 对端以RST响应，它告知本端TCP: 对端已崩溃且已重新启动。该套接字的待处理错误被置为ECONNRESET,套接字本身则被关闭
+ * - 对端对保持存活探测分节没有响应。Berkeley的TCP将另外发送8个探测分节，两两相隔75s，试图得到一个响应，TCP在发出第一个探测分节后11分15秒若无数响应则放弃
+ * */
 int anetTcpKeepAlive(char *err, int fd)
 {
     int yes = 1;
@@ -177,6 +212,12 @@ int anetTcpNonBlockConnect(char *err, char *addr, int port)
     return anetTcpGenericConnect(err,addr,port,ANET_CONNECT_NONBLOCK);
 }
 
+/*
+ * 向fd中读数据，数据长度是count
+ * - 返回的长度 < count: 说明只读了一部分
+ * - 返回的长度 = count: 期望的操作结果
+ * - 返回的长度 < 0: 最后一次读数据失败了
+ * */
 /* Like read(2) but make sure 'count' is read before to return
  * (unless error or EOF condition is encountered) */
 int anetRead(int fd, char *buf, int count)
@@ -192,6 +233,12 @@ int anetRead(int fd, char *buf, int count)
     return totlen;
 }
 
+/*
+ * 向fd中写数据，数据长度是count
+ * - 返回的长度 < count: 说明有一部分没有写完
+ * - 返回的长度 = count: 期望的操作结果
+ * - 返回的长度 < 0: 最后一次写数据失败了
+ * */
 /* Like write(2) but make sure 'count' is read before to return
  * (unless error is encountered) */
 int anetWrite(int fd, char *buf, int count)
@@ -207,6 +254,19 @@ int anetWrite(int fd, char *buf, int count)
     return totlen;
 }
 
+/*
+ * 创建一个TCP的Server
+ * 流程:
+ * - socket
+ * - bind
+ * - listen
+ *
+ * SO_REUSEADDR:
+ * 1. SO_REUSEADDR允许启动一个监听服务器并捆绑其众所周知端口，即使以前建立的将该端口用作它们的本地端口的连接仍存在
+ * 2. SO_REUSEADDR允许在同一端口上启动同一服务器的多个实例，只要每个实例捆绑一个不同的本地IP即可
+ * 3. SO_REUSEADDR允许单个进程捆绑同一端口到多个套接字上，只要每次捆绑指定不同的本地IP地址即可
+ * 4. SO_REUSEADDR允许完全重复的捆绑：当一个IP地址和端口已绑定到某个套接字上时，如果传输协议支持，同样的IP地址和端口还可以捆绑到另一个套接字上。
+ * */
 int anetTcpServer(char *err, int port, char *bindaddr)
 {
     int s, on = 1;
@@ -245,6 +305,9 @@ int anetTcpServer(char *err, int port, char *bindaddr)
     return s;
 }
 
+/* 在一个socket中接受一个连接
+ * 本质上是对accept函数的封装
+ * */
 int anetAccept(char *err, int serversock, char *ip, int *port)
 {
     int fd;

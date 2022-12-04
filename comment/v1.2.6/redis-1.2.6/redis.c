@@ -261,7 +261,7 @@ struct saveparam {
 /* Global server state structure */
 struct redisServer {
     int port;
-    int fd;
+    int fd; // 调用socket函数返回的fd
     redisDb *db;
     dict *sharingpool;
     unsigned int sharingpoolsize;

@@ -33,6 +33,12 @@
 #include "adlist.h"
 #include "zmalloc.h"
 
+/* 创建链表
+ * 1. listCreate只做简单的分配内存/内存初始化操作
+ * 2. list的回调函数在调用部分情况之前，必须要赋值
+ * 3. listRelease(删除链表)与createRelease成对，但是要注意free回调函数
+ * 4. 创建链表失败只有在malloc异常情况下产生，返回值为NULL
+ * */
 /* Create a new list. The created list can be freed with
  * AlFreeList(), but private value of every node need to be freed
  * by the user before to call AlFreeList().
@@ -52,6 +58,10 @@ list *listCreate(void)
     return list;
 }
 
+/* 释放有关链表的所有数据，包括list的元数据和list的元素
+ * 1. listNode的value需要释放，请配置list的free回调函数(listSetFreeMethod)
+ * 2. listNode的value不需要释放(可能需要手动在其他地方释放),请确保list的free一定为NULL
+ * */
 /* Free the whole list.
  *
  * This function can't fail. */
@@ -71,6 +81,13 @@ void listRelease(list *list)
     zfree(list);
 }
 
+/* 添加新的节点至链表头
+ * 1. 添加成功, 返回链表的指针
+ * 2. 添加失败, 返回NULL(malloc失败的情况)
+ * sample
+ * 1. 假设链表: A B C D
+ * 2. 添加节点E => E A B C D
+ */
 /* Add a new node to the list, to head, contaning the specified 'value'
  * pointer as value.
  *
@@ -97,6 +114,13 @@ list *listAddNodeHead(list *list, void *value)
     return list;
 }
 
+/* 添加新的节点至链表尾部
+ * 1. 添加成功, 返回链表的指针
+ * 2. 添加失败, 返回NULL(malloc失败的情况)
+ * sample
+ * 1. 假设链表: A B C D
+ * 2. 添加节点E => A B C D E
+ */
 /* Add a new node to the list, to tail, contaning the specified 'value'
  * pointer as value.
  *
@@ -123,6 +147,10 @@ list *listAddNodeTail(list *list, void *value)
     return list;
 }
 
+/* 删除链表的节点
+ * 1. 会释放node所占据的空间
+ * 2. listNode* node的value看free回调函数而定(没有配置则不处理)
+ * */
 /* Remove the specified node from the specified list.
  * It's up to the caller to free the private value of the node.
  *
@@ -142,6 +170,12 @@ void listDelNode(list *list, listNode *node)
     list->len--;
 }
 
+/* 获取遍历链表的迭代器
+ * 1. direction是迭代的方向: AL_START_HEAD => 从头到尾, AL_START_TAIL => 从尾到头
+ * 2. 返回一个malloc的内存
+ * 3. 不迭代了，需要手动释放迭代器内存(listReleaseIterator)
+ * 4. 迭代器的内存在堆中，所以一般迭代器的指针用在全局变量中
+ */
 /* Returns a list iterator 'iter'. After the initialization every
  * call to listNext() will return the next element of the list.
  *
@@ -159,22 +193,33 @@ listIter *listGetIterator(list *list, int direction)
     return iter;
 }
 
+/* 释放迭代的内存空间，此空间必须是通过listGetIterator接口获得的
+ * */
 /* Release the iterator memory */
 void listReleaseIterator(listIter *iter) {
     zfree(iter);
 }
 
+/* 创建一个方向是从头到尾的迭代器
+ * 1. 迭代器的内存需要提前有
+ */
 /* Create an iterator in the list private iterator structure */
 void listRewind(list *list) {
     list->iter.next = list->head;
     list->iter.direction = AL_START_HEAD;
 }
 
+/* 创建一个方向是从尾到头的迭代器
+ * 1. 迭代器的内存需要提前有
+ */
 void listRewindTail(list *list) {
     list->iter.next = list->tail;
     list->iter.direction = AL_START_TAIL;
 }
 
+/* 根据迭代器，返回下一个元素(注意: 下一个与迭代器方向的关系)
+ * 1. 如果迭代结束，返回NULL
+ */
 /* Return the next element of an iterator.
  * It's valid to remove the currently returned element using
  * listDelNode(), but not to remove other elements.
@@ -207,6 +252,9 @@ listNode *listYield(list *list) {
     return listNext(&list->iter);
 }
 
+/* 完整的复制链表
+ * 注意: listNode的value的copy回调函数
+ * */
 /* Duplicate the whole list. On out of memory NULL is returned.
  * On success a copy of the original list is returned.
  *
@@ -249,6 +297,13 @@ list *listDup(list *orig)
     return copy;
 }
 
+/* 基于key在链表中查找，返回listNode*
+ * 1. 匹配成功，则返回响应的listNode*指针
+ * 2. 匹配失败，则返回NULL
+ * 3. list没有配置match回调函数，则只判断key与listNode*的value是否相等
+ * 4. list配置match回调函数(listSetMatchMethod)，基于match回调函数来进行匹配
+ * 5. 如果有多个匹配项，只返回一个，而且是最靠近链表头的listNode*
+ */
 /* Search the list for a node matching a given key.
  * The match is performed using the 'match' method
  * set with listSetMatchMethod(). If no 'match' method
@@ -281,6 +336,17 @@ listNode *listSearchKey(list *list, void *key)
     return NULL;
 }
 
+/* 返回链表的第index个元素(listNode*)
+ * 1. index < 0, 表示从后往前开始数
+ * 2. index > 0, 表示从前往后开始数
+ * 3. index = 0, 表示链表的第一个元素(struct list的head)
+ * 4. index过大，超过了链表已有的元素数目，返回NULL
+ * Sample:
+ * 1. 假设链表元素为 A B C D
+ * 2. index = 0，返回的是A
+ * 3. index = 1, 返回的是B
+ * 4. index = -1, 返回的是D
+ */
 /* Return the element at the specified zero-based index
  * where 0 is the head, 1 is the element next to head
  * and so on. Negative integers are used in order to count

@@ -104,8 +104,6 @@ void zfree(void *ptr) {
 #else
     realptr = (char*)ptr-PREFIX_SIZE;
     oldsize = *((size_t*)realptr);
-
-    // used_memory = used_memory - (oldsize + PREFIX_SIZE)
     used_memory -= oldsize+PREFIX_SIZE;
     free(realptr);
 #endif
@@ -122,24 +120,3 @@ char *zstrdup(const char *s) {
 size_t zmalloc_used_memory(void) {
     return used_memory;
 }
-
-/* malloc/realloc/free/strdup封装
- *
- * 目的:
- * - 增加堆内存释放统计功能
- *
- * 确定:
- * - 浪费空间
- *
- * MacOS平台流程:
- * - 通过__APPLE__宏定义知晓是Darwin平台(HAVE_MALLOC_SIZE宏定义启用)
- * - Darwin平台支持malloc_size函数
- * - 每次可以通过调用malloc_size函数，即可知晓分配的内存空间大小
- *
- * Linux平台流程:
- * - 假设用户申请内存大小为size
- * - 实际malloc的大小是: size + prefix_size
- * - prefix_size为sizeof(size_t)大小
- * - malloc的prefix_size的内存空间存放size值
- * - 后续操作指针的时候，可通过指针位置起的prefix_size位置的值来得到size值
- * */

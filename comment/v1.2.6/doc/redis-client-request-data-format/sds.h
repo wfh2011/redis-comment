@@ -36,9 +36,9 @@
 typedef char *sds;
 
 struct sdshdr {
-    long len;   // sds字符串实际用的长度
-    long free;  // 预分配当 - 已用 = 剩余可用长度
-    char buf[]; // 数据区地址(本字段不占用内存)
+    long len;
+    long free;
+    char buf[];
 };
 
 sds sdsnewlen(const void *init, size_t initlen);

@@ -60,6 +60,7 @@ static void _dictPanic(const char *fmt, ...)
 
 /* ------------------------- Heap Management Wrappers------------------------ */
 
+// malloc封装
 static void *_dictAlloc(size_t size)
 {
     void *p = zmalloc(size);
@@ -68,6 +69,7 @@ static void *_dictAlloc(size_t size)
     return p;
 }
 
+// dict释放
 static void _dictFree(void *ptr) {
     zfree(ptr);
 }
@@ -121,6 +123,13 @@ static void _dictReset(dict *ht)
     ht->used = 0;
 }
 
+/*
+ * 创建dict
+ *
+ * 流程:
+ * - malloc内存
+ * - 初始化内存
+ * */
 /* Create a new hash table */
 dict *dictCreate(dictType *type,
         void *privDataPtr)
@@ -203,6 +212,36 @@ int dictExpand(dict *ht, unsigned long size)
     return DICT_OK;
 }
 
+/*
+ * 给hash表中添加元素
+ *
+ * 变量名:
+ * - table: 数组，数组每个元素是一个链表
+ * - size: 数组table的元素个数,值为2的指数幂
+ * - sizemask: size-1
+ * - used: 存储的元素个数(kv数)
+ *
+ * 正常流程
+ * - 基于hash算法计算key的hash值
+ * - table的索引位置 = hash值 & sizemask
+ * - 遍历table指定索引的链表，进行与key匹配
+ *  - 如果成功匹配，则已存在，添加流程结束
+ *  - 不匹配，则继续后面流程
+ * - 将待添加的kv放到table指定索引的链表首部
+ *
+ * table长度增加原因:
+ * - table的长度(size)较小，想要查询是否存在，就必须通过链表遍历，在数据量大的情况下必须增加table长度
+ *
+ * table长度增加条件:
+ * - size == 0，直接将table内存分配4个元素个数
+ * - size == used，即当前存储元素个数和table的元素个数相同了，需要扩容
+ *
+ * table长度增加流程:
+ * - 初始化，则table长度0=>4
+ * - 找到size * 2第一个2的指数幂
+ * - 将旧的数据，重新计算table索引(index = hash(key) & sizemask)，并将数据迁移过来
+ * - 释放旧的dict内存(仅dict本身，不包括数据)
+ * */
 /* Add an element to the target hash table */
 int dictAdd(dict *ht, void *key, void *val)
 {
@@ -226,6 +265,14 @@ int dictAdd(dict *ht, void *key, void *val)
     return DICT_OK;
 }
 
+/* 取代value:
+ * - key存在，释放已存在的value内存，并将新的value添加进去
+ * - key不存在，直接添加
+ *
+ * 注意:
+ * - 凡是添加部分，必先检查table的size是否需要扩容
+ * - 释放value的callback必须先配置
+ * */
 /* Add an element, discarding the old if the key already exists.
  * Return 1 if the key was added from scratch, 0 if there was already an
  * element with such key and dictReplace() just performed a value update
@@ -246,6 +293,8 @@ int dictReplace(dict *ht, void *key, void *val)
     return 0;
 }
 
+/* 查找和删除
+ * */
 /* Search and remove an element */
 static int dictGenericDelete(dict *ht, const void *key, int nofree)
 {
@@ -279,10 +328,12 @@ static int dictGenericDelete(dict *ht, const void *key, int nofree)
     return DICT_ERR; /* not found */
 }
 
+// 从dict删除kv，释放kv内存
 int dictDelete(dict *ht, const void *key) {
     return dictGenericDelete(ht,key,0);
 }
 
+// 从dict删除kv，不会释放kv数据内存
 int dictDeleteNoFree(dict *ht, const void *key) {
     return dictGenericDelete(ht,key,1);
 }
@@ -320,6 +371,7 @@ void dictRelease(dict *ht)
     _dictFree(ht);
 }
 
+// 在dict查找key，返回kv的结构体
 dictEntry *dictFind(dict *ht, const void *key)
 {
     dictEntry *he;
@@ -336,6 +388,7 @@ dictEntry *dictFind(dict *ht, const void *key)
     return NULL;
 }
 
+// 基于dict生成一个迭代器
 dictIterator *dictGetIterator(dict *ht)
 {
     dictIterator *iter = _dictAlloc(sizeof(*iter));
@@ -347,6 +400,7 @@ dictIterator *dictGetIterator(dict *ht)
     return iter;
 }
 
+// 迭代器的下一个元素
 dictEntry *dictNext(dictIterator *iter)
 {
     while (1) {
@@ -373,6 +427,7 @@ void dictReleaseIterator(dictIterator *iter)
     _dictFree(iter);
 }
 
+// 随机返回一个kv
 /* Return a random entry from the hash table. Useful to
  * implement randomized algorithms */
 dictEntry *dictGetRandomKey(dict *ht)
@@ -452,6 +507,7 @@ static int _dictKeyIndex(dict *ht, const void *key)
     return h;
 }
 
+// 清空数据
 void dictEmpty(dict *ht) {
     _dictClear(ht);
 }

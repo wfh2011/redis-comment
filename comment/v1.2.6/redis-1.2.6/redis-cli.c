@@ -48,18 +48,18 @@
 #define REDIS_NOTUSED(V) ((void) V)
 
 static struct config {
-    char *hostip;
-    int hostport;
-    long repeat;
-    int dbnum;
+    char *hostip;       // 服务端ip
+    int hostport;       // 服务端端口号
+    long repeat;        // 命令重复执行次数
+    int dbnum;          // dbid,要操作的数据库编号
     int interactive;
-    char *auth;
-} config;
+    char *auth;         // 密码
+} config;               // redis-cli使用的配置，注意: 全局变量
 
 struct redisCommand {
-    char *name;
-    int arity;
-    int flags;
+    char *name;         // 名称
+    int arity;          // 参数数量
+    int flags;          // 标识
 };
 
 static struct redisCommand cmdTable[] = {
@@ -173,6 +173,8 @@ static struct redisCommand *lookupCommand(char *name) {
     return NULL;
 }
 
+/* 建立连接，顺便将fd设置为nodelay
+ * */
 static int cliConnect(void) {
     char err[ANET_ERR_LEN];
     static int fd = ANET_ERR;
@@ -188,6 +190,9 @@ static int cliConnect(void) {
     return fd;
 }
 
+/*
+ * 从fd中读一行数据，遇到\n停止读
+ * */
 static sds cliReadLine(int fd) {
     sds line = sdsempty();
 
@@ -208,6 +213,9 @@ static sds cliReadLine(int fd) {
     return sdstrim(line,"\r\n");
 }
 
+/*
+ * - 读一行
+ * */
 static int cliReadSingleLineReply(int fd, int quiet) {
     sds reply = cliReadLine(fd);
 
@@ -218,11 +226,17 @@ static int cliReadSingleLineReply(int fd, int quiet) {
     return 0;
 }
 
+/*
+ * 在已知类型是bulk的情况下，进行解析后面数据
+ * 请参考附录的doc/resp.md文档
+ * */
 static int cliReadBulkReply(int fd) {
+    // 1. 读到\r\n的位置，获取到了bulk的长度
     sds replylen = cliReadLine(fd);
     char *reply, crlf[2];
     int bulklen;
 
+    // 2. 解析读取到的长度，如果长度为-1，表示空字符串
     if (replylen == NULL) return 1;
     bulklen = atoi(replylen);
     if (bulklen == -1) {
@@ -230,33 +244,53 @@ static int cliReadBulkReply(int fd) {
         printf("(nil)\n");
         return 0;
     }
+
+    // 3. 读取真实的数据
     reply = zmalloc(bulklen);
     anetRead(fd,reply,bulklen);
+
+    // 4. 读取\r\n
     anetRead(fd,crlf,2);
+
+    // 5. 将数据扔到stdout,不能使用printf，因为二进制数据可能会干扰
     if (bulklen && fwrite(reply,bulklen,1,stdout) == 0) {
         zfree(reply);
         return 1;
     }
+
+    // 6. 检查是否是终端机，如果二进制数据最后没有\n，那么补上\n
     if (isatty(fileno(stdout)) && reply[bulklen-1] != '\n')
         printf("\n");
+
     zfree(reply);
     return 0;
 }
 
+/*
+ * 在已知类型是Multi bulk的情况下，进行解析后面数据
+ * 请参考附录的doc/resp.md文档
+ * */
 static int cliReadMultiBulkReply(int fd) {
+    // 1. 获得multi bulk的长度
     sds replylen = cliReadLine(fd);
     int elements, c = 1;
 
     if (replylen == NULL) return 1;
+
+    // 2. 长度是-1 => nil
     elements = atoi(replylen);
     if (elements == -1) {
         sdsfree(replylen);
         printf("(nil)\n");
         return 0;
     }
+
+    // 3. 长度是0, empty list or set
     if (elements == 0) {
         printf("(empty list or set)\n");
     }
+
+    // 4. 对里面的元素再次进行读取，注意cliReadReply函数，递归，递归层数不宜过多，否则易导致stack崩溃
     while(elements--) {
         printf("%d. ", c);
         if (cliReadReply(fd)) return 1;
@@ -265,23 +299,31 @@ static int cliReadMultiBulkReply(int fd) {
     return 0;
 }
 
+/*
+ * 读响应,根据读取的第一个字符来决定读后面的方式
+ * - '-': 读一行
+ * - '+': 读一行
+ * - ':': 读一行
+ * - '$': bulk
+ * - '*': multi bulk
+ * */
 static int cliReadReply(int fd) {
     char type;
 
     if (anetRead(fd,&type,1) <= 0) exit(1);
     switch(type) {
-    case '-':
+    case '-': // 解析错误信息
         printf("(error) ");
         cliReadSingleLineReply(fd,0);
         return 1;
-    case '+':
+    case '+': // 解析简单字符串
         return cliReadSingleLineReply(fd,0);
     case ':':
-        printf("(integer) ");
+        printf("(integer) "); // 解析整形
         return cliReadSingleLineReply(fd,0);
-    case '$':
+    case '$': // 读取二进制安全的字符串(Bulk)
         return cliReadBulkReply(fd);
-    case '*':
+    case '*': // 解析Multi Bulk(多个元素，元素可以是Bulk，也可以是+ - :的一种)
         return cliReadMultiBulkReply(fd);
     default:
         printf("protocol error, got '%c' as reply type byte\n", type);
@@ -289,18 +331,20 @@ static int cliReadReply(int fd) {
     }
 }
 
+// 选择数据库，实际上执行SELECT命令
 static int selectDb(int fd) {
     int retval;
     sds cmd;
     char type;
 
+    // 默认是0
     if (config.dbnum == 0)
         return 0;
 
     cmd = sdsempty();
     cmd = sdscatprintf(cmd,"SELECT %d\r\n",config.dbnum);
-    anetWrite(fd,cmd,sdslen(cmd));
-    anetRead(fd,&type,1);
+    anetWrite(fd,cmd,sdslen(cmd));  // 发送SELECT xxx\r\n命令
+    anetRead(fd,&type,1); // 读一个字节
     if (type <= 0 || type != '+') return 1;
     retval = cliReadSingleLineReply(fd,1);
     if (retval) {
@@ -325,7 +369,10 @@ static int cliSendCommand(int argc, char **argv, int repeat) {
             fprintf(stderr,"Wrong number of arguments for '%s'\n",rc->name);
             return 1;
     }
+    // monitor是一个特殊命令
     if (!strcasecmp(rc->name,"monitor")) read_forever = 1;
+
+    // 建立连接，得到fd
     if ((fd = cliConnect()) == -1) return 1;
 
     /* Select db number */
@@ -383,6 +430,7 @@ static int parseOptions(int argc, char **argv) {
     for (i = 1; i < argc; i++) {
         int lastarg = i==argc-1;
 
+        // -h不是最后一个参数，那么-h后面的参数指的是主机地址
         if (!strcmp(argv[i],"-h") && !lastarg) {
             char *ip = zmalloc(32);
             if (anetResolve(NULL,argv[i+1],ip) == ANET_ERR) {
@@ -392,20 +440,26 @@ static int parseOptions(int argc, char **argv) {
             config.hostip = ip;
             i++;
         } else if (!strcmp(argv[i],"-h") && lastarg) {
+            // -h是最后一个参数，执行打印帮助信息
             usage();
         } else if (!strcmp(argv[i],"-p") && !lastarg) {
+            // -p后面有参数，端口号
             config.hostport = atoi(argv[i+1]);
             i++;
         } else if (!strcmp(argv[i],"-r") && !lastarg) {
+            // -r后面有参数，重复次数
             config.repeat = strtoll(argv[i+1],NULL,10);
             i++;
         } else if (!strcmp(argv[i],"-n") && !lastarg) {
+            // -n后面有参数，dbnum
             config.dbnum = atoi(argv[i+1]);
             i++;
         } else if (!strcmp(argv[i],"-a") && !lastarg) {
+            // -a指的是密码
             config.auth = argv[i+1];
             i++;
         } else if (!strcmp(argv[i],"-i")) {
+            // -i指的是交互模式
             config.interactive = 1;
         } else {
             break;
@@ -414,6 +468,9 @@ static int parseOptions(int argc, char **argv) {
     return i;
 }
 
+/*
+ * - 从命令行读取数据，并将数据存放到sds中
+ * */
 static sds readArgFromStdin(void) {
     char buf[1024];
     sds arg = sdsempty();
@@ -494,6 +551,8 @@ int main(int argc, char **argv) {
     config.interactive = 0;
     config.auth = NULL;
 
+
+    // firstarg其实就是将redis-cli的-h/-p等选项过滤，找到实际执行命令的位置
     firstarg = parseOptions(argc,argv);
     argc -= firstarg;
     argv += firstarg;

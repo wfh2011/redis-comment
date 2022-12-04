@@ -82,6 +82,8 @@
 #include <unistd.h>
 
 #define LINENOISE_MAX_LINE 4096
+
+// 不支持的终端
 static char *unsupported_term[] = {"dumb","cons25",NULL};
 
 static struct termios orig_termios; /* in order to restore at exit */
@@ -94,6 +96,12 @@ char **history = NULL;
 static void linenoiseAtExit(void);
 int linenoiseHistoryAdd(const char *line);
 
+/* 判断当前终端是不支持的
+ *
+ * 返回值:
+ * 1: 不支持
+ * 0: 支持
+ * */
 static int isUnsupportedTerm(void) {
     char *term = getenv("TERM");
     int j;
@@ -352,8 +360,12 @@ static int linenoiseRaw(char *buf, size_t buflen, const char *prompt) {
         errno = EINVAL;
         return -1;
     }
+    // 开启raw模式
     if (enableRawMode(fd) == -1) return -1;
+
     count = linenoisePrompt(fd, buf, buflen, prompt);
+
+    // 关闭raw模式
     disableRawMode(fd);
     printf("\n");
     return count;
@@ -364,18 +376,23 @@ char *linenoise(const char *prompt) {
     int count;
 
     if (isUnsupportedTerm()) {
+        // 如果是不支持的终端处理
         size_t len;
 
         printf("%s",prompt);
         fflush(stdout);
+        // 从标准输入读取一行，当读取到换行符、文件结束、或者是LINENOISE_MAX_LINE-1，停止读取
         if (fgets(buf,LINENOISE_MAX_LINE,stdin) == NULL) return NULL;
         len = strlen(buf);
+
+        // 找到换行符位置，设置\0
         while(len && (buf[len-1] == '\n' || buf[len-1] == '\r')) {
             len--;
             buf[len] = '\0';
         }
         return strdup(buf);
     } else {
+        // 支持的终端处理
         count = linenoiseRaw(buf,LINENOISE_MAX_LINE,prompt);
         if (count == -1) return NULL;
         return strdup(buf);
@@ -383,6 +400,7 @@ char *linenoise(const char *prompt) {
 }
 
 /* Using a circular buffer is smarter, but a bit more complex to handle. */
+// 添加历史记录
 int linenoiseHistoryAdd(const char *line) {
     char *linecopy;
 
