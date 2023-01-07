@@ -385,6 +385,11 @@ static int cliSendCommand(int argc, char **argv, int repeat) {
     while(repeat--) {
         /* Build the command to send */
         cmd = sdsempty();
+        // 构建RESP协议的数据
+        // 1. 构建数组元素的个数
+        // 2. 数组单个元素的长度
+        // 3. 数组元素的数据
+        // 4. \r\n
         if (rc->flags & REDIS_CMD_MULTIBULK) {
             cmd = sdscatprintf(cmd,"*%d\r\n",argc);
             for (j = 0; j < argc; j++) {
@@ -412,10 +417,12 @@ static int cliSendCommand(int argc, char **argv, int repeat) {
         anetWrite(fd,cmd,sdslen(cmd));
         sdsfree(cmd);
 
+        // read_forever为true的时候，此时执行的是monitor命令
         while (read_forever) {
             cliReadSingleLineReply(fd,0);
         }
 
+        // 读取响应，内部有打印
         retval = cliReadReply(fd);
         if (retval) {
             return retval;
@@ -565,6 +572,7 @@ int main(int argc, char **argv) {
         cliSendCommand(2, convertToSds(2, authargv), 1);
     }
 
+    // 如果没有命令，那么一定执行交互模式，或者是手动增加-i选项
     if (argc == 0 || config.interactive == 1) repl();
 
     argvcopy = convertToSds(argc, argv);

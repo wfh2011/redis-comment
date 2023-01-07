@@ -401,6 +401,9 @@ char *linenoise(const char *prompt) {
 
 /* Using a circular buffer is smarter, but a bit more complex to handle. */
 // 添加历史记录
+// 没有分配内存 => 分配内存
+// 达到最大历史记录，去掉第一个，插入最后一个
+// 未达到最大历史记录，尾部追加一个
 int linenoiseHistoryAdd(const char *line) {
     char *linecopy;
 
@@ -431,6 +434,7 @@ int linenoiseHistorySetMaxLen(int len) {
         new = malloc(sizeof(char*)*len);
         if (new == NULL) return 0;
         if (len < tocopy) tocopy = len;
+        // 找到最新的tocopy历史记录
         memcpy(new,history+(history_max_len-tocopy), sizeof(char*)*tocopy);
         free(history);
         history = new;
