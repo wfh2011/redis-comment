@@ -38,27 +38,11 @@
 #include <ctype.h>
 #include "zmalloc.h"
 
-/* 内存oom处理
- *
- * 流程:
- * - 标准输出打印
- * - 进程退出
- * */
 static void sdsOomAbort(void) {
     fprintf(stderr,"SDS: Out Of Memory (SDS_ABORT_ON_OOM defined)\n");
     abort();
 }
 
-/* 产生一个新的sds字符串
- *
- * 流程:
- * - 有数据: malloc + memcpy
- * - 没数据: malloc + memzero
- *
- * 注意:
- * - malloc返回的内存: hdr + buf
- * - sds的地址是buf
- * */
 sds sdsnewlen(const void *init, size_t initlen) {
     struct sdshdr *sh;
 
@@ -78,59 +62,34 @@ sds sdsnewlen(const void *init, size_t initlen) {
     return (char*)sh->buf;
 }
 
-/* 产生一个空的sds字符串
- * */
 sds sdsempty(void) {
     return sdsnewlen("",0);
 }
 
-/* 基于C字符串产生一个sds字符串
- * */
 sds sdsnew(const char *init) {
     size_t initlen = (init == NULL) ? 0 : strlen(init);
     return sdsnewlen(init, initlen);
 }
 
-/*
- * 返回当前sds字符串的长度(找到hdr的len字段)
- * */
 size_t sdslen(const sds s) {
     struct sdshdr *sh = (void*) (s-(sizeof(struct sdshdr)));
     return sh->len;
 }
 
-/*
- * 复制一个sds字符串(深度复制)
- * */
 sds sdsdup(const sds s) {
     return sdsnewlen(s, sdslen(s));
 }
 
-/*
- * 释放sds的内存
- *
- * 注意:
- * - free传入的地址是hdr的首地址，因为malloc的时候就是hdr的首地址
- * */
 void sdsfree(sds s) {
     if (s == NULL) return;
     zfree(s-sizeof(struct sdshdr));
 }
 
-/*
- * 返回sds的可用空间(hdr的free字段)
- * */
 size_t sdsavail(sds s) {
     struct sdshdr *sh = (void*) (s-(sizeof(struct sdshdr)));
     return sh->free;
 }
 
-/*
- * 更新sds的实际使用长度(len)和可用长度(free)
- *
- * 注意:
- * - 此函数只能针对以'\0'结尾的数据，因为真实长度的获取采用的是strlen
- * */
 void sdsupdatelen(sds s) {
     struct sdshdr *sh = (void*) (s-(sizeof(struct sdshdr)));
     int reallen = strlen(s);
@@ -138,13 +97,6 @@ void sdsupdatelen(sds s) {
     sh->len = reallen;
 }
 
-/*
- * 对已有的sds内存进行扩容
- *
- * 流程:
- * - 需要的内存 <= 剩余内存, 无须扩容，返回原始的sds即可
- * - 需要的内存 > 剩余内存，重新malloc，总大小是(len + addlen) * 2 + hdr + 1，最终返回新的sds即可
- * */
 static sds sdsMakeRoomFor(sds s, size_t addlen) {
     struct sdshdr *sh, *newsh;
     size_t free = sdsavail(s);
@@ -165,9 +117,6 @@ static sds sdsMakeRoomFor(sds s, size_t addlen) {
     return newsh->buf;
 }
 
-/*
- * 在已有的sds基础上追加字符串(sds、C字符串均可)
- * */
 sds sdscatlen(sds s, void *t, size_t len) {
     struct sdshdr *sh;
     size_t curlen = sdslen(s);
@@ -182,16 +131,10 @@ sds sdscatlen(sds s, void *t, size_t len) {
     return s;
 }
 
-/*
- * 在已有的sds基础上追加字符串(C字符串)
- * */
 sds sdscat(sds s, char *t) {
     return sdscatlen(s, t, strlen(t));
 }
 
-/*
- * 将数据t复制到sds上(sds、C字符串均可)，原先的sds数据就被丢弃
- * */
 sds sdscpylen(sds s, char *t, size_t len) {
     struct sdshdr *sh = (void*) (s-(sizeof(struct sdshdr)));
     size_t totlen = sh->free+sh->len;
@@ -209,20 +152,10 @@ sds sdscpylen(sds s, char *t, size_t len) {
     return s;
 }
 
-/*
- * 将数据t复制到sds上(C字符串)，原先的sds数据就被丢弃
- * */
 sds sdscpy(sds s, char *t) {
     return sdscpylen(s, t, strlen(t));
 }
 
-/*
- * 按照指定格式在sds后面追加字符串，追加的字符串格式可自定义
- *
- * 注意:
- * - 函数调用结束，只需要释放return的内存，入参的sds内存无须处理
- * - fmt: 参考vsnprintf
- * */
 sds sdscatprintf(sds s, const char *fmt, ...) {
     va_list ap;
     char *buf, *t;
@@ -251,9 +184,6 @@ sds sdscatprintf(sds s, const char *fmt, ...) {
     return t;
 }
 
-/* 剔除字符串s的左右两边不符合条件的字符，cset就是要剔除的字符数组
- * 一般是用来剔除空格、换行符等
- * */
 sds sdstrim(sds s, const char *cset) {
     struct sdshdr *sh = (void*) (s-(sizeof(struct sdshdr)));
     char *start, *end, *sp, *ep;
@@ -271,11 +201,6 @@ sds sdstrim(sds s, const char *cset) {
     return s;
 }
 
-/* 取一段字符串
- *
- * 注意:
- * - start end均可以是负数
- * */
 sds sdsrange(sds s, long start, long end) {
     struct sdshdr *sh = (void*) (s-(sizeof(struct sdshdr)));
     size_t newlen, len = sdslen(s);
@@ -304,28 +229,18 @@ sds sdsrange(sds s, long start, long end) {
     return s;
 }
 
-/*
- * 字符串转小写
- * */
 void sdstolower(sds s) {
     int len = sdslen(s), j;
 
     for (j = 0; j < len; j++) s[j] = tolower(s[j]);
 }
 
-/*
- * 字符串转大写
- * */
 void sdstoupper(sds s) {
     int len = sdslen(s), j;
 
     for (j = 0; j < len; j++) s[j] = toupper(s[j]);
 }
 
-/* 字符串比较，其实调用memcmp函数
- * 注意:
- * - 两个字符串有相同前缀且两个字符串有包含关系的情况
- * */
 int sdscmp(sds s1, sds s2) {
     size_t l1, l2, minlen;
     int cmp;
@@ -338,9 +253,6 @@ int sdscmp(sds s1, sds s2) {
     return cmp;
 }
 
-/* 字符串分割
- * 注意: 返回的sds和count将用于分割结果处理以及内存释放(sdsfreesplitres)
- * */
 /* Split 's' with separator in 'sep'. An array
  * of sds strings is returned. *count will be set
  * by reference to the number of tokens returned.

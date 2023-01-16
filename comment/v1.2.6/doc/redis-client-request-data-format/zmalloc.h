@@ -1,4 +1,4 @@
-/* SDSLib, A C dynamic strings library
+/* zmalloc - total amount of allocated memory aware version of malloc()
  *
  * Copyright (c) 2006-2009, Salvatore Sanfilippo <antirez at gmail dot com>
  * All rights reserved.
@@ -28,44 +28,13 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef __SDS_H
-#define __SDS_H
+#ifndef _ZMALLOC_H
+#define _ZMALLOC_H
 
-#include <sys/types.h>
+void *zmalloc(size_t size);
+void *zrealloc(void *ptr, size_t size);
+void zfree(void *ptr);
+char *zstrdup(const char *s);
+size_t zmalloc_used_memory(void);
 
-typedef char *sds;
-
-struct sdshdr {
-    long len;   // sds字符串实际用的长度
-    long free;  // 预分配当 - 已用 = 剩余可用长度
-    char buf[]; // 数据区地址(本字段不占用内存)
-};
-
-sds sdsnewlen(const void *init, size_t initlen);
-sds sdsnew(const char *init);
-sds sdsempty();
-size_t sdslen(const sds s);
-sds sdsdup(const sds s);
-void sdsfree(sds s);
-size_t sdsavail(sds s);
-sds sdscatlen(sds s, void *t, size_t len);
-sds sdscat(sds s, char *t);
-sds sdscpylen(sds s, char *t, size_t len);
-sds sdscpy(sds s, char *t);
-
-#ifdef __GNUC__
-sds sdscatprintf(sds s, const char *fmt, ...)
-    __attribute__((format(printf, 2, 3)));
-#else
-sds sdscatprintf(sds s, const char *fmt, ...);
-#endif
-
-sds sdstrim(sds s, const char *cset);
-sds sdsrange(sds s, long start, long end);
-void sdsupdatelen(sds s);
-int sdscmp(sds s1, sds s2);
-sds *sdssplitlen(char *s, int len, char *sep, int seplen, int *count);
-void sdstolower(sds s);
-void sdstoupper(sds s);
-
-#endif
+#endif /* _ZMALLOC_H */

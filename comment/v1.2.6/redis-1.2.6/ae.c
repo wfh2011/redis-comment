@@ -40,6 +40,13 @@
 #include "zmalloc.h"
 #include "config.h"
 
+/*
+ * 用epoll、select、kqueue取决于当前编译的平台
+ * - linux => epoll
+ * - 定义了MAC_OS_X_VERSION_10_6宏的Darwin系统 => kqueue
+ * - 其他版本的Darwin系统 => select
+ * - 以上条件均不符合 => select
+ * */
 /* Include the best multiplexing layer supported by this system.
  * The following should be ordered by performances, descending. */
 #ifdef HAVE_EPOLL
@@ -82,6 +89,13 @@ void aeStop(aeEventLoop *eventLoop) {
     eventLoop->stop = 1;
 }
 
+/* 创建文件事件
+ *
+ * 文件事件:
+ * - 使用multiplexing来同时监听多个套接字，并根据套接字的目前执行的任务来为套接字关联不同的事件处理器(callback)
+ * - 当被监听的套接字准备好accept/read/write/close等操作时，与操作相对应的文件事件就会产生，执行callback
+ *
+ * */
 int aeCreateFileEvent(aeEventLoop *eventLoop, int fd, int mask,
         aeFileProc *proc, void *clientData)
 {
@@ -100,6 +114,9 @@ int aeCreateFileEvent(aeEventLoop *eventLoop, int fd, int mask,
     return AE_OK;
 }
 
+
+/* 删除文件事件
+ * */
 void aeDeleteFileEvent(aeEventLoop *eventLoop, int fd, int mask)
 {
     if (fd >= AE_SETSIZE) return;
@@ -118,6 +135,11 @@ void aeDeleteFileEvent(aeEventLoop *eventLoop, int fd, int mask)
     aeApiDelEvent(eventLoop, fd, mask);
 }
 
+/* 获取当前的时间，注意:
+ * - seconds指的是秒，milliseconds指的是毫秒
+ * - milliseconds<1000
+ * - milliseconds表示当前时间的精度(在精度不高的场景，忽略此值也可以)
+ * */
 static void aeGetTime(long *seconds, long *milliseconds)
 {
     struct timeval tv;
@@ -127,6 +149,12 @@ static void aeGetTime(long *seconds, long *milliseconds)
     *milliseconds = tv.tv_usec/1000;
 }
 
+/*
+ * 将当前时间加上milliseconds后的时间(毫秒)
+ * 注意:
+ * - ms的值<1000
+ * - ms表示当前时间的精度
+ * */
 static void aeAddMillisecondsToNow(long long milliseconds, long *sec, long *ms) {
     long cur_sec, cur_ms, when_sec, when_ms;
 
@@ -141,6 +169,23 @@ static void aeAddMillisecondsToNow(long long milliseconds, long *sec, long *ms) 
     *ms = when_ms;
 }
 
+/* 创建一个时间事件(链表节点)，并将其链表节点放到事件循环的链表头部
+ *
+ * 具体的链表节点包括以下数据:
+ * - id, 每创建一个时间事件，id都会自增
+ * - 期望此时间事件执行的时间(当前时间 + 传入的多少毫秒)
+ * - 回调函数
+ * - 回调函数处理的参数
+ *
+ * 时间事件分类:
+ * - 定时事件: 程序在指定的时间之后执行一次
+ * - 周期事件: 程序每隔指定时间就执行一次
+ *
+ * 时间事件链表:
+ * - 事件按照id，从大到小排列，因为新的事件(链表节点, id自增)总是插入到链表头部
+ * - 时间事件的期待执行的时间是无序，即when字段是无序的
+ * - 虽然是遍历全部链表，但是性能不会低，因为整个链表的元素很少，当前redis版本只有一个，即serverCron
+ * */
 long long aeCreateTimeEvent(aeEventLoop *eventLoop, long long milliseconds,
         aeTimeProc *proc, void *clientData,
         aeEventFinalizerProc *finalizerProc)
@@ -160,6 +205,17 @@ long long aeCreateTimeEvent(aeEventLoop *eventLoop, long long milliseconds,
     return id;
 }
 
+/* 删除某个时间事件
+ *
+ * 流程:
+ * - 通过id对时间事件链表进行遍历，id匹配上的即为要删除的事件
+ * - 将找到的链表节点从链表中剔除
+ * - 如果找到的链表节点的finalizerProc回调函数赋值，那么需要执行
+ * - 释放待删除的链表节点内存
+ *
+ * 返回值：
+ * - 没有找到id所对应的时间事件，返回AE_ERR
+ * */
 int aeDeleteTimeEvent(aeEventLoop *eventLoop, long long id)
 {
     aeTimeEvent *te, *prev = NULL;
@@ -182,6 +238,17 @@ int aeDeleteTimeEvent(aeEventLoop *eventLoop, long long id)
     return AE_ERR; /* NO event with the specified ID found */
 }
 
+/*
+ * 对时间事件链表进行遍历，找到链表节点的UTC时间值最小的节点
+ *
+ * 原理:
+ * - 链表节点的时间由秒+毫秒(毫秒 < 1000，毫秒可以理解成时间精度)组成
+ * - 先比较秒部分，较小值优先
+ * - 秒值相同，则比较毫秒值，毫秒值较小优先
+ *
+ * 返回值:
+ * - 时间事件链表无元素，则返回NULL
+ * */
 /* Search the first timer to fire.
  * This operation is useful to know how many time the select can be
  * put in sleep without to delay any event.
@@ -208,6 +275,15 @@ static aeTimeEvent *aeSearchNearestTimer(aeEventLoop *eventLoop)
     return nearest;
 }
 
+/*
+ * 处理时间事件
+ * - 对时间事件链表进行遍历
+ * - 如果链表节点记录的期望处理时间小于时间(表示时间到了，但是未处理)
+ * - 执行符合条件的任务timeProc,并对返回值retval进行判断
+ *  - retval == -1: 表明此任务处理完毕，从时间事件链表头重新遍历
+ *  - retval >= 0: 表明再过retval后，任务再次执行
+ * -
+ * */
 /* Process time events */
 static int processTimeEvents(aeEventLoop *eventLoop) {
     int processed = 0;
@@ -259,6 +335,28 @@ static int processTimeEvents(aeEventLoop *eventLoop) {
     return processed;
 }
 
+/* 处理事件
+ *
+ * 核心思想:
+ * - 通过aeCreateFileEvent函数将accept/write/read/close等事件与其相关回调进行映射
+ * - 在aeProcessEvents中，accept/write/read/close等文件事件出发，执行注册的回调函数
+ * - 文件事件优先级 > 时间事件优先级
+ * - 消息处理/定时任务等被集成到主线程中(这是说redis单线程的原因)
+ * - epoll/kevent里面的等待时间参数取决于最小的时间事件时间(when字段)与当前时间之差:
+ *  - when - now < 0: epoll/kevent不等待，即等待时间为0
+ *  - when - now > 0: epoll/kevent等待,等待时间为when - now
+ *
+ *  时间/文件事件与AE_DONT_WAIT关系:
+ *  - AE_DONT_WAIT指的是epoll/kevent的时间参数为0(不等待，没有文件事件，直接进入下一步操作)的情况
+ *  - 文件事件的epoll/kevent必有等待时间的参数
+ *  - 文件事件 + 有时间事件(时间事件链表不为空) => 必然会有等待 => 文件事件+时间事件 => flag != AE_DONT_WAIT => flag == WAIT
+ *  - 无时间事件(时间事件链表为空) + WAIT => 只有文件事件 + WAIT => 一直等待
+ *  - 无时间事件(时间事件链表为空) + DONT_WAIT => 只有文件事件 + DONT_WAIT => 文件事件等待时间为0
+ *
+ * 注意:
+ * - aeProcessEvents只有一个地方调用，且flags为AE_ALL_EVENTS(AE_FILE_EVENTS|AE_TIME_EVENTS)
+ * - flags必须包括AE_FILE_EVENTS或者AE_TIME_EVENTS其一
+ * */
 /* Process every pending time event, then every pending file event
  * (that may be registered by time event callbacks just processed).
  * Without special flags the function sleeps until some file event
@@ -373,12 +471,25 @@ int aeWait(int fd, int mask, long long milliseconds) {
     }
 }
 
+/* 事件循环主流程
+ * */
 void aeMain(aeEventLoop *eventLoop) {
     eventLoop->stop = 0;
     while (!eventLoop->stop)
         aeProcessEvents(eventLoop, AE_ALL_EVENTS);
 }
 
+/* 返回使用的事件api，以下的一种:
+ * - epoll
+ * - select
+ * - kqueue
+ * */
 char *aeGetApiName(void) {
     return aeApiName();
 }
+
+/* Questions:
+ * - processTimeEvents中对maxId判断的理由?
+ * - processTimeEvents遍历到符合条件的时间事件，从链表头遍历的原因？
+ *
+ * */

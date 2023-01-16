@@ -33,25 +33,35 @@
 
 /* Node, List, and Iterator are the only data structures used currently. */
 
+/* 链表节点
+ * 包括：
+ * 1. 节点在链表的位置
+ * 2. 节点所持有的数据，数据一般为malloc后的返回值(指针)
+ */
 typedef struct listNode {
-    struct listNode *prev;
-    struct listNode *next;
-    void *value;
+    struct listNode *prev;  // 后继
+    struct listNode *next;  // 前驱
+    void *value;            // 链表节点的数据
 } listNode;
 
+/* 链表迭代器
+ * 包括:
+ * 1. 下一个迭代的节点
+ * 2. 迭代方向: 从前到后(AL_START_HEAD)、从后到前(AL_START_TAIL)
+ */
 typedef struct listIter {
-    listNode *next;
-    int direction;
+    listNode *next;     // 下一个节点
+    int direction;      // 方向
 } listIter;
 
 typedef struct list {
-    listNode *head;
-    listNode *tail;
-    void *(*dup)(void *ptr);
-    void (*free)(void *ptr);
-    int (*match)(void *ptr, void *key);
-    unsigned int len;
-    listIter iter;
+    listNode *head;                         // 链表第一个节点指针
+    listNode *tail;                         // 链表最后一个节点指针
+    void *(*dup)(void *ptr);                // 复制listNode的value的回调函
+    void (*free)(void *ptr);                // 释放listNode的value的回调函
+    int (*match)(void *ptr, void *key);     // 匹配listNode的value的回调函
+    unsigned int len;                       // 链表元素的个数
+    listIter iter;                          // 链表当前迭代位置
 } list;
 
 /* Functions implemented as macros */

@@ -12,6 +12,15 @@
 static redisReply *redisReadReply(int fd);
 static redisReply *createReplyObject(int type, sds reply);
 
+/*
+ * 建立和redis的连接
+ * - 本质上是通过connect处理，返回fd
+ * - 如果建立连接失败，ret != NULL, 且必须要释放内存(freeReplyObject)
+ * - 建立连接成功，ret == NULL
+ *
+ * 其他:
+ * - 通过代码Review发现，调用anetTcpConnect的err其实是可以使用NULL
+ * */
 /* Connect to a Redis instance. On success NULL is returned and *fd is set
  * to the socket file descriptor. On error a redisReply object is returned
  * with reply->type set to REDIS_REPLY_ERROR and reply->string containing
@@ -35,6 +44,7 @@ static redisReply *createReplyObject(int type, sds reply) {
     return r;
 }
 
+// 释放一个reply，通过递归方式来处理
 /* Free a reply object */
 void freeReplyObject(redisReply *r) {
     size_t j;
@@ -54,10 +64,17 @@ void freeReplyObject(redisReply *r) {
     zfree(r);
 }
 
+// 创建一个IO error的reply
 static redisReply *redisIOError(void) {
     return createReplyObject(REDIS_REPLY_ERROR,sdsnew("I/O error"));
 }
 
+/* 读一行数据
+ * - 每次读一个字符
+ * - 读失败，返回NULL
+ * - 读不到数据了，剔除左右两边的\r\n返回
+ * - 读到\n，剔除左右两边的\r\n返回
+ * */
 /* In a real high performance C client this should be bufferized */
 static sds redisReadLine(int fd) {
     sds line = sdsempty();
@@ -79,6 +96,7 @@ static sds redisReadLine(int fd) {
     return sdstrim(line,"\r\n");
 }
 
+/* 读数据，然后拼接在一个sds中，可能会有多次的malloc操作 */
 static redisReply *redisReadSingleLineReply(int fd, int type) {
     sds buf = redisReadLine(fd);
     
@@ -86,6 +104,7 @@ static redisReply *redisReadSingleLineReply(int fd, int type) {
     return createReplyObject(type,buf);
 }
 
+/* 读一个整数，和读一行字符串逻辑相似，多了转换数字逻辑 */
 static redisReply *redisReadIntegerReply(int fd) {
     sds buf = redisReadLine(fd);
     redisReply *r = zmalloc(sizeof(*r));
@@ -156,6 +175,17 @@ static redisReply *redisReadReply(int fd) {
     }
 }
 
+/* 按照指定格式构建命令并向redis-server发送
+ *
+ * 核心流程:
+ * - 普通字符串，结尾加\r\n
+ * - 包含二进制数据，补上二进制数据长度，再放二进制数据
+ * - '%'符号
+ *
+ * 案例
+ * - 二进制数据形式: SET wufeihu 3\r\nfix\r\n
+ * - 二进制数据形式: hset a b\r\n
+ * */
 /* Execute a command. This function is printf alike where
  * %s a plain string such as a key, %b a bulk payload. For instance:
  *

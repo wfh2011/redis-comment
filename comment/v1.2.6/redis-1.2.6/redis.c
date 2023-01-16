@@ -260,8 +260,8 @@ struct saveparam {
 
 /* Global server state structure */
 struct redisServer {
-    int port;
-    int fd;
+    int port; // port配置
+    int fd; // 调用socket函数返回的fd
     redisDb *db;
     dict *sharingpool;
     unsigned int sharingpoolsize;
@@ -279,10 +279,10 @@ struct redisServer {
     long long stat_numcommands;    /* number of processed commands */
     long long stat_numconnections; /* number of connections received */
     /* Configuration */
-    int verbosity;
-    int glueoutputbuf;
-    int maxidletime;
-    int dbnum;
+    int verbosity; // loglevel配置，REDIS_DEBUG， REDIS_NOTICE, REDIS_WARNING
+    int glueoutputbuf; // glueoutputbuf配置
+    int maxidletime; // timeout配置
+    int dbnum; // databases配置
     int daemonize;
     int appendonly;
     int appendfsync;
@@ -293,10 +293,10 @@ struct redisServer {
     pid_t bgsavechildpid;
     pid_t bgrewritechildpid;
     sds bgrewritebuf; /* buffer taken by parent during oppend only rewrite */
-    struct saveparam *saveparams;
-    int saveparamslen;
-    char *logfile;
-    char *bindaddr;
+    struct saveparam *saveparams; // save配置
+    int saveparamslen;            // save配置
+    char *logfile; // logfile配置，如果logfile值为stdout，则为空
+    char *bindaddr; // bind配置
     char *dbfilename;
     char *appendfilename;
     char *requirepass;
@@ -304,13 +304,13 @@ struct redisServer {
     int rdbcompression;
     /* Replication related */
     int isslave;
-    char *masterauth;
-    char *masterhost;
-    int masterport;
+    char *masterauth; // masterauth配置
+    char *masterhost; // 配置文件slaveof字段会修改此值
+    int masterport; // 配置文件slaveof字段会修改此值
     redisClient *master;    /* client that is master for this slave */
     int replstate;
-    unsigned int maxclients;
-    unsigned long maxmemory;
+    unsigned int maxclients; // maxclients配置
+    unsigned long maxmemory; // maxmemory配置
     /* Sort parameters - qsort_r() is only available under BSD so we
      * have to take this state global, in order to pass it to sortCompare() */
     int sort_desc;
@@ -1125,6 +1125,8 @@ static void createSharedObjects(void) {
     shared.select9 = createStringObject("select 9\r\n",10);
 }
 
+// 追加save命令参数
+// 注意用法: 先realloc len+1个，然后在最后一个设置值
 static void appendServerSaveParams(time_t seconds, int changes) {
     server.saveparams = zrealloc(server.saveparams,sizeof(struct saveparam)*(server.saveparamslen+1));
     server.saveparams[server.saveparamslen].seconds = seconds;
@@ -1248,17 +1250,26 @@ static int yesnotoi(char *s) {
     else return -1;
 }
 
+/*
+ * 从filename读取配置文件，注意：filename为-,则表示从stdin读取
+ * */
 /* I agree, this is a very rudimental way to load a configuration...
    will improve later if the config gets more complex */
 static void loadServerConfig(char *filename) {
     FILE *fp;
+
+    // 存放每一行的字符串
     char buf[REDIS_CONFIGLINE_MAX+1], *err = NULL;
+
+    // 行号，当前仅用来报错的时候提示
     int linenum = 0;
     sds line = NULL;
 
     if (filename[0] == '-' && filename[1] == '\0')
+        // 从stdin读取配置文件
         fp = stdin;
     else {
+        // filename路径去读取文件内容
         if ((fp = fopen(filename,"r")) == NULL) {
             redisLog(REDIS_WARNING,"Fatal error, can't open config file");
             exit(1);
@@ -1270,15 +1281,19 @@ static void loadServerConfig(char *filename) {
         int argc, j;
 
         linenum++;
+
+        // 转换成sds，并剔除左右两边的空字符串(\t\r\n)
         line = sdsnew(buf);
         line = sdstrim(line," \t\r\n");
 
+        // '#'开头的是注释，忽略掉
         /* Skip comments and blank lines*/
         if (line[0] == '#' || line[0] == '\0') {
             sdsfree(line);
             continue;
         }
 
+        // 通过空格分割kv
         /* Split into arguments */
         argv = sdssplitlen(line,sdslen(line)," ",1,&argc);
         sdstolower(argv[0]);
@@ -1292,6 +1307,7 @@ static void loadServerConfig(char *filename) {
         } else if (!strcasecmp(argv[0],"port") && argc == 2) {
             server.port = atoi(argv[1]);
             if (server.port < 1 || server.port > 65535) {
+                // 注意端口号范围是: [1, 65535]
                 err = "Invalid port"; goto loaderr;
             }
         } else if (!strcasecmp(argv[0],"bind") && argc == 2) {
@@ -1304,6 +1320,7 @@ static void loadServerConfig(char *filename) {
             }
             appendServerSaveParams(seconds,changes);
         } else if (!strcasecmp(argv[0],"dir") && argc == 2) {
+            // 改变工作目录
             if (chdir(argv[1]) == -1) {
                 redisLog(REDIS_WARNING,"Can't chdir to '%s': %s",
                     argv[1], strerror(errno));
@@ -1325,6 +1342,7 @@ static void loadServerConfig(char *filename) {
                 zfree(server.logfile);
                 server.logfile = NULL;
             }
+            // 如果设定了日志路径，那么将会进行打开测试
             if (server.logfile) {
                 /* Test if we are able to open the file. The server will not
                  * be able to abort just for this problem later... */
@@ -1346,6 +1364,7 @@ static void loadServerConfig(char *filename) {
         } else if (!strcasecmp(argv[0],"maxmemory") && argc == 2) {
             server.maxmemory = strtoll(argv[1], NULL, 10);
         } else if (!strcasecmp(argv[0],"slaveof") && argc == 3) {
+            // 注意: 如果是某个节点的从节点，那么将会在redis-server中设置主节点的host和port，并同时设置状态
             server.masterhost = sdsnew(argv[1]);
             server.masterport = atoi(argv[2]);
             server.replstate = REDIS_REPL_CONNECT;

@@ -42,30 +42,37 @@
 /* Unused arguments generate annoying warnings... */
 #define DICT_NOTUSED(V) ((void) V)
 
+/* kv节点
+ * */
 typedef struct dictEntry {
-    void *key;
-    void *val;
-    struct dictEntry *next;
+    void *key;                  // key
+    void *val;                  // value
+    struct dictEntry *next;     // 下一个dictEntry
 } dictEntry;
 
+/*
+ * dict的回调函数
+ * */
 typedef struct dictType {
-    unsigned int (*hashFunction)(const void *key);
-    void *(*keyDup)(void *privdata, const void *key);
-    void *(*valDup)(void *privdata, const void *obj);
-    int (*keyCompare)(void *privdata, const void *key1, const void *key2);
-    void (*keyDestructor)(void *privdata, void *key);
-    void (*valDestructor)(void *privdata, void *obj);
+    unsigned int (*hashFunction)(const void *key);                          // hash计算函数
+    void *(*keyDup)(void *privdata, const void *key);                       // key复制函数
+    void *(*valDup)(void *privdata, const void *obj);                       // value复制函数
+    int (*keyCompare)(void *privdata, const void *key1, const void *key2);  // key比较函数
+    void (*keyDestructor)(void *privdata, void *key);                       // key内存析构函数
+void (*valDestructor)(void *privdata, void *obj);                           // value内存析构函数
 } dictType;
 
 typedef struct dict {
-    dictEntry **table;
-    dictType *type;
-    unsigned long size;
-    unsigned long sizemask;
-    unsigned long used;
-    void *privdata;
+    dictEntry **table;      // hash表，
+    dictType *type;         // 存放各种回调函数的参数
+    unsigned long size;     // hash表大小
+    unsigned long sizemask; // 掩码，一般指的是size-1
+    unsigned long used;     // hash表已有节点数量
+    void *privdata;         // dict私有数据
 } dict;
 
+/* dict迭代器
+ * */
 typedef struct dictIterator {
     dict *ht;
     int index;
